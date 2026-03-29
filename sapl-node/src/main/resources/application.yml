@@ -157,7 +157,7 @@ io.sapl:
     # Required when pdp-config-type is REMOTE_BUNDLES.
     #
     # remote-bundles:
-    #   base-url: https://pap.example.com/bundles
+    #   base-url: https://pap.example.com/bundles/
     #   pdp-ids:
     #     - default
     #   mode: POLLING
@@ -240,7 +240,7 @@ management:
 # --- Logging ---
 
 logging.level:
-  "[io.sapl]": INFO
-  "[org.springframework]": INFO
+  "[io.sapl]": DEBUG
+  "[org.springframework]": DEBUG
   # Suppress unavoidable warning in GraalVM native images (no-op on HotSpot)
   "[io.micrometer.core.instrument.binder.jvm.JvmGcMetrics]": ERROR

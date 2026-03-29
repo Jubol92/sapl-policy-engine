@@ -18,6 +18,7 @@
 package io.sapl.api.attributes;
 
 import io.sapl.api.model.Value;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -424,5 +425,7 @@ public interface AttributeRepository extends AttributeFinder {
     default Mono<Void> removeAttribute(String attributeName, List<Value> arguments) {
         return removeAttribute(null, attributeName, arguments);
     }
+
+    public Flux<PersistedAttribute> getAttributeForEntity(Value entity);
 
 }

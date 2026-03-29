@@ -37,6 +37,7 @@ import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -207,6 +208,9 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
     public Mono<Void> publishAttribute(Value entity, String attributeName, List<Value> arguments, Value value,
             Duration ttl, TimeOutStrategy timeOutStrategy) {
         validatePublishParameters(attributeName, arguments, value, ttl, timeOutStrategy);
+
+        String message = "Using repository " + this.hashCode() + " with storage " + storage.hashCode();
+        log.debug(message);
 
         return Mono.defer(() -> {
             val key       = new AttributeKey(entity, attributeName, arguments);
@@ -395,4 +399,12 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
         return sink.asFlux();
     }
 
+    // Gets all keys in the storage and return the keys for the right entity O(n)
+    public Flux<PersistedAttribute> getAttributeForEntity(Value entity) {
+        // Get all the keys from the repository
+        return storage.findAll().filter(entry -> {
+            AttributeKey key = entry.getKey();
+            return (entity == null && key.entity() == null) || (entity != null && entity.equals(key.entity()));
+        }).map(Map.Entry::getValue);
+    }
 }
