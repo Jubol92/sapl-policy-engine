@@ -20,6 +20,7 @@ package io.sapl.attributes;
 import io.sapl.api.attributes.AttributeKey;
 import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.api.attributes.PersistedAttribute;
+import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -36,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Suitable for testing, development, and deployments where attribute loss on
  * restart is acceptable.
  */
+@Slf4j
 public class HeapAttributeStorage implements AttributeStorage {
 
     private final ConcurrentHashMap<AttributeKey, PersistedAttribute> storage = new ConcurrentHashMap<>();
@@ -49,6 +51,9 @@ public class HeapAttributeStorage implements AttributeStorage {
     /** {@inheritDoc} */
     @Override
     public Mono<Void> put(AttributeKey key, PersistedAttribute value) {
+        String message = "Putting attribute into storage " + this.hashCode();
+        log.debug(message);
+
         return Mono.fromRunnable(() -> storage.put(key, value));
     }
 

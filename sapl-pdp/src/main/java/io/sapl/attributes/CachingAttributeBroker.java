@@ -76,6 +76,7 @@ public class CachingAttributeBroker implements AttributeBroker {
 
     private final Object lock = new Object();
 
+    @Getter
     private final AttributeRepository attributeRepository;
 
     @Getter

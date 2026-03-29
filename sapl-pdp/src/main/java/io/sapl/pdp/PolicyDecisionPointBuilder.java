@@ -21,6 +21,8 @@ import io.sapl.api.pdp.*;
 import io.sapl.pdp.configuration.PdpState;
 import io.sapl.pdp.configuration.PdpVoterSource;
 import io.sapl.pdp.configuration.source.*;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import reactor.core.Disposable;
 import tools.jackson.databind.json.JsonMapper;
 import io.sapl.api.attributes.AttributeBroker;

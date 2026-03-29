@@ -42,6 +42,12 @@ import lombok.val;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
 
+// Test für Push API
+import io.sapl.pdp.configuration.AttributeConfiguration;
+import io.sapl.pdp.PdpConfiguration;
+import io.sapl.attributes.push.AttributePushController;
+import org.springframework.context.annotation.Import;
+
 @EnableCaching
 @ImportRuntimeHints(SaplNodeApplication.NativeResourceHints.class)
 @SpringBootApplication(excludeName = { "io.sapl.spring.config.AuthorizationManagerConfiguration",
@@ -51,6 +57,7 @@ import picocli.CommandLine;
         "org.springframework.boot.persistence.autoconfigure.PersistenceExceptionTranslationAutoConfiguration" })
 @ComponentScan({ "io.sapl.node", "io.sapl.server" })
 @EnableConfigurationProperties(SaplNodeProperties.class)
+@Import({ AttributeConfiguration.class, PdpConfiguration.class, AttributePushController.class })
 public class SaplNodeApplication {
 
     private static final String SERVER_COMMAND = "server";
