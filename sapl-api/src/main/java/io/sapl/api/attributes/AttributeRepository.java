@@ -23,6 +23,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Repository for publishing and retrieving dynamic attributes that can be used
@@ -428,4 +429,5 @@ public interface AttributeRepository extends AttributeFinder {
 
     public Flux<PersistedAttribute> getAttributeForEntity(Value entity);
 
+    public Flux<Map.Entry<AttributeKey, PersistedAttribute>> getAllAttributes();
 }

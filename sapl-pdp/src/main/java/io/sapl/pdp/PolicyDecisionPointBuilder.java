@@ -17,6 +17,7 @@
  */
 package io.sapl.pdp;
 
+import io.sapl.attributes.PersistentAttributeStorage;
 import io.sapl.pdp.configuration.PdpState;
 import io.sapl.pdp.configuration.PdpVoterSource;
 import io.sapl.pdp.configuration.source.*;
@@ -886,7 +887,9 @@ public class PolicyDecisionPointBuilder {
     }
 
     private AttributeBroker buildAttributeBroker() throws AttributeBrokerException {
-        val storage             = attributeStorage != null ? attributeStorage : new HeapAttributeStorage();
+        // val storage = attributeStorage != null ? attributeStorage : new
+        // HeapAttributeStorage();
+        val storage             = attributeStorage != null ? attributeStorage : new PersistentAttributeStorage();
         val attributeRepository = new InMemoryAttributeRepository(clock, storage);
         val attributeBroker     = new CachingAttributeBroker(attributeRepository);
 

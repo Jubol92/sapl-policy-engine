@@ -20,6 +20,7 @@ package io.sapl.node;
 import java.util.Arrays;
 import java.util.Set;
 
+import io.sapl.hazelcast.HazelcastConfiguration;
 import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.RuntimeHintsRegistrar;
@@ -55,9 +56,10 @@ import org.springframework.context.annotation.Import;
         "org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration",
         "org.springframework.boot.transaction.autoconfigure.TransactionManagerCustomizationAutoConfiguration",
         "org.springframework.boot.persistence.autoconfigure.PersistenceExceptionTranslationAutoConfiguration" })
-@ComponentScan({ "io.sapl.node", "io.sapl.server" })
+@ComponentScan({ "io.sapl.node", "io.sapl.server", "io.sapl.hazelcast" })
 @EnableConfigurationProperties(SaplNodeProperties.class)
-@Import({ AttributeConfiguration.class, PdpConfiguration.class, AttributePushController.class })
+@Import({ AttributeConfiguration.class, PdpConfiguration.class, AttributePushController.class,
+        HazelcastConfiguration.class })
 public class SaplNodeApplication {
 
     private static final String SERVER_COMMAND = "server";
