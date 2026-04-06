@@ -23,6 +23,7 @@ import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.attributes.CachingAttributeBroker;
 import io.sapl.attributes.HeapAttributeStorage;
 import io.sapl.attributes.InMemoryAttributeRepository;
+import io.sapl.attributes.PersistentAttributeStorage;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -34,7 +35,8 @@ public class AttributeConfiguration {
 
     @Bean
     public AttributeStorage attributeStorage() {
-        return new HeapAttributeStorage();
+        // return new HeapAttributeStorage();
+        return new PersistentAttributeStorage();
     }
 
     @Bean

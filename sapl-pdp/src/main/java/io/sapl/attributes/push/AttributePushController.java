@@ -22,13 +22,20 @@ import io.sapl.api.attributes.AttributeRepository;
 import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
 import io.sapl.api.attributes.PersistedAttribute;
 import io.sapl.api.model.Value;
+import io.sapl.hazelcast.AttributeDistributionService;
+import io.sapl.hazelcast.HazelcastNodeId;
+import io.sapl.hazelcast.PublishAttributeEvent;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 @RestController
@@ -36,39 +43,47 @@ import java.util.List;
 public class AttributePushController {
     private final AttributeRepository repository;
 
-    public AttributePushController(AttributeRepository repository) {
-        this.repository = repository;
+    private final AttributeDistributionService distribution;
+    private final HazelcastNodeId              nodeId;
+
+    public AttributePushController(AttributeRepository repository,
+            ObjectProvider<AttributeDistributionService> distribution,
+            HazelcastNodeId nodeId) {
+        this.repository   = repository;
+        this.distribution = distribution.getIfAvailable();
+        this.nodeId       = nodeId;
     }
 
     // Request muss dem DTO aus PushRequest entsprechen
     @PostMapping("/publish")
     public Mono<String> publish(@RequestBody PushRequest request) {
-        // Check if the required fields are set
-        if (request.getAttributeName() == null || request.getAttributeValue() == null) {
-            return Mono.error(new IllegalArgumentException("Required fields are not set"));
-        }
-
         // Either empty or set
         Value  entity = request.getEntity() == null ? null : Value.of(request.getEntity());
         String name   = request.getAttributeName();
         Value  value  = convertValue(request.getAttributeValue());
 
-        // To-Do: Testen, ob Arguments so funktionieren
         List<Value> arguments = request.getArguments() == null ? List.of()
                 : request.getArguments().stream().map(this::convertValue).toList();
 
-        // TTL either empty with default 3600 seconds or set
         Duration ttl = request.getTtl() == null ? Duration.ofHours(1) : Duration.ofSeconds(request.getTtl());
 
-        // Strategy is either set or default REMOVE
         TimeOutStrategy strategy = request.getStrategy() == null ? TimeOutStrategy.REMOVE
                 : TimeOutStrategy.valueOf(request.getStrategy());
 
         String message = "Publishing to repository " + repository.hashCode();
         log.debug(message);
 
-        return repository.publishAttribute(entity, name, arguments, value, ttl, strategy)
-                .thenReturn("Attribute published to repository");
+        return repository.publishAttribute(entity, name, arguments, value, ttl, strategy).doOnSuccess(v -> {
+            log.info("Distribution: {}", distribution.toString());
+            PublishAttributeEvent event = new PublishAttributeEvent();
+            event.setNodeId(nodeId.getNodeId());
+            event.setEntity(request.getEntity());
+            event.setAttributeName(name);
+            event.setValue(request.getAttributeValue());
+            event.setTtl(ttl.getSeconds());
+            event.setStrategy(strategy.name());
+            distribution.publish(event);
+        }).thenReturn("Attribute published to repository");
     }
 
     @DeleteMapping("/delete/{entity}/{attribute}")
@@ -85,6 +100,11 @@ public class AttributePushController {
     @GetMapping("/entity/{entity}")
     public Flux<PersistedAttribute> findAttributeByEntity(@PathVariable String entity) {
         return repository.getAttributeForEntity(Value.of(entity));
+    }
+
+    @GetMapping("/findAll")
+    public Flux<Map.Entry<AttributeKey, PersistedAttribute>> findAllAttributes() {
+        return repository.getAllAttributes();
     }
 
     // Internal helper method the right Value object

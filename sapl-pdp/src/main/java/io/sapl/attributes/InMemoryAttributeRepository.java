@@ -23,9 +23,12 @@ import io.sapl.api.attributes.AttributeRepository;
 import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.api.attributes.PersistedAttribute;
 import io.sapl.api.model.Value;
+import io.sapl.hazelcast.AttributeDistributionService;
+import io.sapl.hazelcast.PublishAttributeEvent;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
+import org.springframework.beans.factory.annotation.Autowired;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -38,6 +41,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -77,6 +81,7 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
      * the clock for time-based operations, must not be null
      */
     public InMemoryAttributeRepository(@NonNull Clock clock) {
+
         this(clock, new HeapAttributeStorage());
     }
 
@@ -406,5 +411,11 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
             AttributeKey key = entry.getKey();
             return (entity == null && key.entity() == null) || (entity != null && entity.equals(key.entity()));
         }).map(Map.Entry::getValue);
+    }
+
+    // Gets all keys in the storage
+    public Flux<Map.Entry<AttributeKey, PersistedAttribute>> getAllAttributes() {
+        // Get all the keys from the repository
+        return storage.findAll();
     }
 }
