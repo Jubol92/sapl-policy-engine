@@ -1,0 +1,3 @@
+policy "test user pip"
+permit
+  subject.<user.plan> == "premium";

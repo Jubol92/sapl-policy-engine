@@ -27,6 +27,8 @@ import org.springframework.aot.hint.RuntimeHintsRegistrar;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.mongodb.autoconfigure.MongoAutoConfiguration;
+import org.springframework.boot.mongodb.autoconfigure.MongoReactiveAutoConfiguration;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.ImportRuntimeHints;
@@ -51,11 +53,18 @@ import org.springframework.context.annotation.Import;
 
 @EnableCaching
 @ImportRuntimeHints(SaplNodeApplication.NativeResourceHints.class)
-@SpringBootApplication(excludeName = { "io.sapl.spring.config.AuthorizationManagerConfiguration",
-        "io.sapl.spring.config.ConstraintsHandlerAutoconfiguration",
-        "org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration",
-        "org.springframework.boot.transaction.autoconfigure.TransactionManagerCustomizationAutoConfiguration",
-        "org.springframework.boot.persistence.autoconfigure.PersistenceExceptionTranslationAutoConfiguration" })
+@SpringBootApplication(exclude = { MongoAutoConfiguration.class,
+        MongoReactiveAutoConfiguration.class, }, excludeName = {
+                "io.sapl.spring.config.AuthorizationManagerConfiguration",
+                // "io.sapl.spring.config.ConstraintsHandlerAutoconfiguration",
+                "org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration",
+                "org.springframework.boot.transaction.autoconfigure.TransactionManagerCustomizationAutoConfiguration",
+                "org.springframework.boot.persistence.autoconfigure.PersistenceExceptionTranslationAutoConfiguration",
+                "io.sapl.spring.data.mongo.config.SaplMongoReactiveAutoConfiguration",
+                "org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration",
+                "org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration",
+                "org.springframework.boot.autoconfigure.mongo.MongoReactiveAutoConfiguration",
+                "org.springframework.boot.autoconfigure.data.mongo.MongoReactiveDataAutoConfiguration" })
 @ComponentScan({ "io.sapl.node", "io.sapl.server", "io.sapl.hazelcast" })
 @EnableConfigurationProperties(SaplNodeProperties.class)
 @Import({ AttributeConfiguration.class, PdpConfiguration.class, AttributePushController.class,
@@ -129,14 +138,19 @@ public class SaplNodeApplication {
 
     static class NativeResourceHints implements RuntimeHintsRegistrar {
 
-        private static final String   COMMANDS_PACKAGE           = "io.sapl.node.cli.commands.";
-        private static final String   OPTIONS_PACKAGE            = "io.sapl.node.cli.options.";
-        private static final String[] PICOCLI_REFLECTION_CLASSES = { COMMANDS_PACKAGE + "BenchmarkCommand",
-                COMMANDS_PACKAGE + "LoadtestCommand", OPTIONS_PACKAGE + "BenchmarkOptions",
+        private static final String COMMANDS_PACKAGE  = "io.sapl.node.cli.commands.";
+        private static final String OPTIONS_PACKAGE   = "io.sapl.node.cli.options.";
+        private static final String BENCHMARK_PACKAGE = "io.sapl.node.cli.benchmark.";
+
+        private static final String[] PICOCLI_REFLECTION_CLASSES = { COMMANDS_PACKAGE + "AttributesCommand",
+                COMMANDS_PACKAGE + "BenchmarkCommand", OPTIONS_PACKAGE + "BenchmarkOptions",
                 OPTIONS_PACKAGE + "BundleVerificationOptions", COMMANDS_PACKAGE + "CheckCommand",
                 COMMANDS_PACKAGE + "DecideCommand", COMMANDS_PACKAGE + "DecideOnceCommand",
-                OPTIONS_PACKAGE + "NamedSubscriptionOptions", OPTIONS_PACKAGE + "PdpOptions",
-                OPTIONS_PACKAGE + "PolicySourceOptions", OPTIONS_PACKAGE + "RemoteConnectionOptions",
+                COMMANDS_PACKAGE + "DeleteAttributeCommand", COMMANDS_PACKAGE + "GeneratePoliciesCommand",
+                COMMANDS_PACKAGE + "GetAttributeCommand", OPTIONS_PACKAGE + "NamedSubscriptionOptions",
+                COMMANDS_PACKAGE + "LoadtestCommand", OPTIONS_PACKAGE + "PdpOptions",
+                OPTIONS_PACKAGE + "PolicySourceOptions",
+                COMMANDS_PACKAGE + "PublishAttributeCommand", OPTIONS_PACKAGE + "RemoteConnectionOptions",
                 OPTIONS_PACKAGE + "RemoteConnectionOptions$AuthOptions", COMMANDS_PACKAGE + "ServerCommand",
                 OPTIONS_PACKAGE + "SubscriptionInputOptions", COMMANDS_PACKAGE + "TestCommand" };
 

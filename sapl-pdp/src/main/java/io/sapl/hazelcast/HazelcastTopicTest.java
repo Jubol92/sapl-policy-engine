@@ -19,9 +19,15 @@ package io.sapl.hazelcast;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.topic.ITopic;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
+/***
+ * Simple test message to send when a hazelcast node is started.
+ * Will be deleted later
+ */
 @Component
+@ConditionalOnBean(HazelcastInstance.class)
 public class HazelcastTopicTest {
 
     public HazelcastTopicTest(HazelcastInstance hazelcastInstance) {
@@ -32,8 +38,9 @@ public class HazelcastTopicTest {
 
         new Thread(() -> {
             try {
-                Thread.sleep(8000);
-                topic.publish("Hello from node");
+                // wait 10 seconds after the start of a node and publish the test message
+                Thread.sleep(10000);
+                topic.publish("Node" + hazelcastInstance.getName() + " is up");
             } catch (Exception e) {
                 e.printStackTrace();
             }

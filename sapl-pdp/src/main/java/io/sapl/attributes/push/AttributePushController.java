@@ -17,17 +17,14 @@
  */
 package io.sapl.attributes.push;
 
-import io.sapl.api.attributes.AttributeKey;
 import io.sapl.api.attributes.AttributeRepository;
 import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
-import io.sapl.api.attributes.PersistedAttribute;
 import io.sapl.api.model.Value;
 import io.sapl.hazelcast.AttributeDistributionService;
 import io.sapl.hazelcast.HazelcastNodeId;
 import io.sapl.hazelcast.PublishAttributeEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -35,27 +32,31 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import java.util.Objects;
 
 @Slf4j
 @RestController
 @RequestMapping("/api/attributes")
 public class AttributePushController {
     private final AttributeRepository repository;
-
+    // private final ObjectMapper mapper;
     private final AttributeDistributionService distribution;
     private final HazelcastNodeId              nodeId;
 
     public AttributePushController(AttributeRepository repository,
             ObjectProvider<AttributeDistributionService> distribution,
-            HazelcastNodeId nodeId) {
+            HazelcastNodeId nodeId
+    // ObjectMapper mapper
+    ) {
         this.repository   = repository;
         this.distribution = distribution.getIfAvailable();
         this.nodeId       = nodeId;
+        // this.mapper = mapper;
     }
 
     // Request muss dem DTO aus PushRequest entsprechen
-    @PostMapping("/publish")
+    @SuppressWarnings("unused")
+    @PostMapping
     public Mono<String> publish(@RequestBody PushRequest request) {
         // Either empty or set
         Value  entity = request.getEntity() == null ? null : Value.of(request.getEntity());
@@ -63,9 +64,10 @@ public class AttributePushController {
         Value  value  = convertValue(request.getAttributeValue());
 
         List<Value> arguments = request.getArguments() == null ? List.of()
-                : request.getArguments().stream().map(this::convertValue).toList();
+                : request.getArguments().stream().map(this::convertValue).filter(Objects::nonNull).toList();
 
         Duration ttl = request.getTtl() == null ? Duration.ofHours(1) : Duration.ofSeconds(request.getTtl());
+        // Duration ttl = toDuration(request.getTtl());
 
         TimeOutStrategy strategy = request.getStrategy() == null ? TimeOutStrategy.REMOVE
                 : TimeOutStrategy.valueOf(request.getStrategy());
@@ -74,38 +76,80 @@ public class AttributePushController {
         log.debug(message);
 
         return repository.publishAttribute(entity, name, arguments, value, ttl, strategy).doOnSuccess(v -> {
-            log.info("Distribution: {}", distribution.toString());
-            PublishAttributeEvent event = new PublishAttributeEvent();
-            event.setNodeId(nodeId.getNodeId());
-            event.setEntity(request.getEntity());
-            event.setAttributeName(name);
-            event.setValue(request.getAttributeValue());
-            event.setTtl(ttl.getSeconds());
-            event.setStrategy(strategy.name());
-            distribution.publish(event);
+            if (distribution != null) {
+                log.info("Distribution: {}", distribution);
+                PublishAttributeEvent event = new PublishAttributeEvent();
+                event.setNodeId(nodeId.getNodeId());
+                event.setEntity(request.getEntity());
+                event.setAttributeName(name);
+                event.setValue(request.getAttributeValue());
+                event.setTtl(ttl.getSeconds());
+                event.setStrategy(strategy.name());
+                distribution.publish(event);
+            }
         }).thenReturn("Attribute published to repository");
     }
 
-    @DeleteMapping("/delete/{entity}/{attribute}")
+    @SuppressWarnings("unused")
+    @DeleteMapping("/entity/{entity}/{attribute}")
     public Mono<String> deleteAttribute(@PathVariable String entity, @PathVariable String attribute) {
         return repository.removeAttribute(convertValue(entity), attribute)
                 .thenReturn("Attribute remove from repository");
     }
 
-    @DeleteMapping("/delete/{attribute}")
+    @SuppressWarnings("unused")
+    @DeleteMapping("/attribute/{attribute}")
     public Mono<String> deleteAttribute(@PathVariable String attribute) {
-        return repository.removeAttribute(attribute).thenReturn("Attribute remove from repository");
+        return repository.removeAttribute(attribute).thenReturn("Attribute removed from repository");
     }
 
+    /*
+     * @GetMapping("/entity/{entity}")
+     * public Flux<PersistedAttribute> findAttributeByEntity(@PathVariable String
+     * entity) {
+     * return repository.getAttributeForEntity(Value.of(entity));
+     * }
+     */
+
+    @SuppressWarnings("unused")
     @GetMapping("/entity/{entity}")
-    public Flux<PersistedAttribute> findAttributeByEntity(@PathVariable String entity) {
-        return repository.getAttributeForEntity(Value.of(entity));
+    public Flux<Map<String, Object>> findAttributeByEntity(@PathVariable String entity) {
+        return repository.getAttributeForEntity(Value.of(entity))
+                .map(attribute -> Map.of("value", attribute.value(), "timestamp", attribute.timestamp(), "ttl",
+                        attribute.ttl().getSeconds(), "timeoutStrategy", attribute.timeoutStrategy(), "timeoutDeadline",
+                        attribute.timeoutDeadline()));
     }
 
-    @GetMapping("/findAll")
-    public Flux<Map.Entry<AttributeKey, PersistedAttribute>> findAllAttributes() {
-        return repository.getAllAttributes();
+    @SuppressWarnings("unused")
+    @GetMapping
+    public Flux<Map<String, Object>> findAllAttributes() {
+        return repository.getAllAttributes().map(entry -> Map.of("key", entry.getKey(), "value",
+                Map.of("value", entry.getValue().value(), "timestamp", entry.getValue().timestamp(), "ttl",
+                        entry.getValue().ttl().getSeconds(), "timeoutStrategy", entry.getValue().timeoutStrategy(),
+                        "timeoutDeadline", entry.getValue().timeoutDeadline())));
     }
+
+    /*
+     * @GetMapping
+     * public Flux<AttributeResponse> findAllAttributes() {
+     * return repository.getAllAttributes()
+     * .map(entry -> new AttributeResponse(
+     * new AttributeResponse.Key(
+     * entry.getKey().entity() == null ? null
+     * : mapper.convertValue(entry.getKey().entity(), Object.class),
+     *
+     * entry.getKey().attributeName(),
+     *
+     * entry.getKey().arguments().stream().map(arg -> mapper.convertValue(arg,
+     * Object.class))
+     * .toList()),
+     * new AttributeResponse.Value(mapper.convertValue(entry.getValue().value(),
+     * Object.class),
+     * entry.getValue().timestamp(), entry.getValue().ttl().getSeconds(),
+     * entry.getValue().timeoutStrategy().name(),
+     * entry.getValue().timeoutDeadline())));
+     * }
+     */
 
     // Internal helper method the right Value object
     private Value convertValue(Object input) {

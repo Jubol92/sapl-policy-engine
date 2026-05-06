@@ -20,8 +20,12 @@ package io.sapl.pdp;
 import io.sapl.api.attributes.AttributeBroker;
 import io.sapl.api.attributes.AttributeBrokerException;
 import io.sapl.api.pdp.PolicyDecisionPoint;
+import io.sapl.attributes.CachingAttributeBroker;
+import io.sapl.attributes.libraries.UserPolicyInformationPoint;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.nio.file.Path;
 
 @Configuration
 public class PdpConfiguration {
@@ -30,7 +34,11 @@ public class PdpConfiguration {
     public PolicyDecisionPointBuilder.PDPComponents pdpComponents(AttributeBroker attributeBroker)
             throws AttributeBrokerException {
 
-        return PolicyDecisionPointBuilder.withDefaults().withAttributeBroker(attributeBroker).build();
+        return PolicyDecisionPointBuilder.withDefaults()
+                .withDirectorySource(Path.of("/opt/forked-sapl-policy-engine/policies"))
+                .withAttributeBroker(attributeBroker)
+                // .withPolicyInformationPoint(new UserPolicyInformationPoint())
+                .build();
     }
 
     @Bean

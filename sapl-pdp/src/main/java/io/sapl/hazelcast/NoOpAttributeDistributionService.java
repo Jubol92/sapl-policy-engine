@@ -17,16 +17,19 @@
  */
 package io.sapl.hazelcast;
 
-import lombok.Getter;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.stereotype.Component;
 
-import java.util.UUID;
-
-/***
- * Class to generate a static, system-wide Node ID
- */
-@Getter
 @Component
-public class HazelcastNodeId {
-    private final String nodeId = UUID.randomUUID().toString();
+@ConditionalOnMissingBean(AttributeDistributionService.class)
+public class NoOpAttributeDistributionService extends AttributeDistributionService {
+
+    public NoOpAttributeDistributionService() {
+        super(null);
+    }
+
+    @Override
+    public void publish(PublishAttributeEvent event) {
+        // do nothing
+    }
 }

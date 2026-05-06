@@ -335,6 +335,9 @@
 						</compilerArgs>
 						<failOnError>true</failOnError>
 						<failOnWarning>true</failOnWarning>
+						<javaLauncher>
+							<version>17</version>
+						</javaLauncher>
 					</configuration>
 				</plugin>
 				<plugin>

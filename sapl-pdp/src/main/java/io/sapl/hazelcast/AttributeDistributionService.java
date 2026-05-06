@@ -20,42 +20,62 @@ package io.sapl.hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.topic.ITopic;
 import com.hazelcast.topic.MessageListener;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Service;
 
+/***
+ * Distribution service class for several topics within the hazelcast cluster.
+ */
+@Slf4j
 @Service
+@ConditionalOnBean(HazelcastInstance.class)
 public class AttributeDistributionService {
     private final HazelcastInstance hazelcast;
 
+    // Important: there should be only one hazelcast instance
     public AttributeDistributionService(HazelcastInstance hazelcast) {
+
         this.hazelcast = hazelcast;
     }
 
+    // Gets the topic from the cluster
+    // https://docs.hazelcast.com/hazelcast/5.6/data-structures/topic
+    // To-Do: enable globalOrderEnabled
     private ITopic<PublishAttributeEvent> topic() {
         if (hazelcast == null) {
             return null;
         }
+        // To-Do: No static topic name in the class
         String topicName = "sapl-attribute-events";
         return hazelcast.getTopic(topicName);
     }
 
+    // Publishes event into the cluster
     public void publish(PublishAttributeEvent event) {
         ITopic<PublishAttributeEvent> topic = topic();
         if (topic != null) {
-            System.out.println("Publishing event to Hazelcast topic");
+            log.info("Publishing event to Hazelcast topic");
+            /*
+             * 1. Serialize event
+             * 2. Send to Hazelcast cluster
+             * 3. Send the event to all other nodes that are registered to this topic
+             */
             topic.publish(event);
         } else {
-            System.out.println("Hazelcast topic is NULL");
+            log.error("Hazelcast topic is null. Cannot publish");
         }
     }
 
+    // Registers a listener for the given topic
+    // Topic = communication channel, Listener = communication logic
     public void subscribe(MessageListener<PublishAttributeEvent> listener) {
         ITopic<PublishAttributeEvent> topic = topic();
         if (topic != null) {
-            System.out.println("Subscribing to Hazelcast topic");
+            log.debug("Subscribing to hazelcast topic {}", topic.getName());
             topic.addMessageListener(listener);
         } else {
-            System.out.println("Cannot subscribe, topic NULL");
+            log.error("Cannot subscribe to topic because topic is null");
         }
     }
 }

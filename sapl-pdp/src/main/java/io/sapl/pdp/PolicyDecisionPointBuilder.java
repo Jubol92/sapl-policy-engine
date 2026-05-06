@@ -18,12 +18,10 @@
 package io.sapl.pdp;
 
 import io.sapl.api.pdp.*;
-import io.sapl.attributes.PersistentAttributeStorage;
+import io.sapl.attributes.storage.HeapAttributeStorage;
 import io.sapl.pdp.configuration.PdpState;
 import io.sapl.pdp.configuration.PdpVoterSource;
 import io.sapl.pdp.configuration.source.*;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import reactor.core.Disposable;
 import tools.jackson.databind.json.JsonMapper;
 import io.sapl.api.attributes.AttributeBroker;
@@ -32,7 +30,6 @@ import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.api.functions.FunctionBroker;
 import io.sapl.api.model.Value;
 import io.sapl.attributes.CachingAttributeBroker;
-import io.sapl.attributes.HeapAttributeStorage;
 import io.sapl.attributes.InMemoryAttributeRepository;
 import io.sapl.attributes.libraries.HttpPolicyInformationPoint;
 import io.sapl.attributes.libraries.JWTKeyProvider;
@@ -859,7 +856,7 @@ public class PolicyDecisionPointBuilder {
     private AttributeBroker buildAttributeBroker() throws AttributeBrokerException {
         // val storage = attributeStorage != null ? attributeStorage : new
         // HeapAttributeStorage();
-        val storage             = attributeStorage != null ? attributeStorage : new PersistentAttributeStorage();
+        val storage             = attributeStorage != null ? attributeStorage : new HeapAttributeStorage();
         val attributeRepository = new InMemoryAttributeRepository(clock, storage);
         val attributeBroker     = new CachingAttributeBroker(attributeRepository);
 

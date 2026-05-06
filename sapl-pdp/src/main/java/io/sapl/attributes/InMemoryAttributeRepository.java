@@ -23,12 +23,10 @@ import io.sapl.api.attributes.AttributeRepository;
 import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.api.attributes.PersistedAttribute;
 import io.sapl.api.model.Value;
-import io.sapl.hazelcast.AttributeDistributionService;
-import io.sapl.hazelcast.PublishAttributeEvent;
+import io.sapl.attributes.storage.HeapAttributeStorage;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
-import org.springframework.beans.factory.annotation.Autowired;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -41,7 +39,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -390,6 +387,7 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
      */
     @Override
     public Flux<Value> invoke(AttributeFinderInvocation invocation) {
+        log.info("Using repository {} with storage {}", this.hashCode(), storage.hashCode());
         val key  = AttributeKey.of(invocation);
         val sink = attributeSinks.computeIfAbsent(key, k -> {
                      val newSink   = Sinks.many().replay().<Value>limit(1);

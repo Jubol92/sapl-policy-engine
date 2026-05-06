@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributes;
+package io.sapl.attributes.storage;
 
 import io.sapl.api.attributes.AttributeKey;
 import io.sapl.api.attributes.AttributeStorage;

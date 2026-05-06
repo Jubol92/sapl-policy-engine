@@ -24,6 +24,7 @@ import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
 import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.api.attributes.PersistedAttribute;
 import io.sapl.api.model.Value;
+import io.sapl.attributes.storage.HeapAttributeStorage;
 import lombok.val;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
