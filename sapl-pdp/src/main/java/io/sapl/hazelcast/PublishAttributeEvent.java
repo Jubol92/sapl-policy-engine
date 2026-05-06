@@ -23,6 +23,12 @@ import lombok.Setter;
 import java.io.Serializable;
 import java.util.List;
 
+/***
+ * DTO for the Publish Attribute Hazelcast Event
+ * Simple object that contains the data that was pushed
+ * via the push API and stored into the attribute storage
+ */
+
 @Getter
 @Setter
 public class PublishAttributeEvent implements Serializable {

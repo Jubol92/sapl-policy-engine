@@ -17,9 +17,12 @@
  */
 package io.sapl.hazelcast;
 
+import com.hazelcast.core.HazelcastInstance;
 import io.sapl.api.attributes.AttributeRepository;
+import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
 import io.sapl.api.model.Value;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
@@ -27,6 +30,7 @@ import jakarta.annotation.PostConstruct;
 
 @Component
 @Slf4j
+@ConditionalOnBean(HazelcastInstance.class)
 public class HazelcastAttributeListener {
 
     private final AttributeDistributionService distribution;
@@ -41,22 +45,27 @@ public class HazelcastAttributeListener {
         this.nodeId       = nodeId;
     }
 
+    // Executed after Bean creation and dependency injection
+    // Method to register to the Hazelcast topic
     @PostConstruct
     public void init() {
         log.info("Subscribing to Hazelcast topic on node {}", nodeId.getNodeId());
 
+        // Registration + Event publishing
         distribution.subscribe(message -> {
             PublishAttributeEvent event = message.getMessageObject();
 
             log.info("Received attribute event on node {}", nodeId.getNodeId());
 
+            // Do no actions when the event was from this node
             if (event.getNodeId().equals(nodeId.getNodeId())) {
                 return;
             }
 
+            // Publish the event into the repository
             repository.publishAttribute(Value.of(event.getEntity()), event.getAttributeName(), List.of(),
                     Value.of(event.getValue()), Duration.ofSeconds(event.getTtl()),
-                    AttributeRepository.TimeOutStrategy.valueOf(event.getStrategy())).subscribe();
+                    TimeOutStrategy.valueOf(event.getStrategy())).subscribe();
         });
     }
 }

@@ -15,18 +15,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.hazelcast;
+package io.sapl.api.attributes;
 
-import lombok.Getter;
-import org.springframework.stereotype.Component;
+import java.time.Instant;
+import java.util.List;
 
-import java.util.UUID;
+public record AttributeResponse(Key key, Value value) {
+    public record Key(Object entity, String attributeName, List<Object> arguments) {}
 
-/***
- * Class to generate a static, system-wide Node ID
- */
-@Getter
-@Component
-public class HazelcastNodeId {
-    private final String nodeId = UUID.randomUUID().toString();
+    public record Value(Object value, Instant timestamp, long ttl, String timeoutStrategy, Instant timeoutDeadline) {}
 }

@@ -14,6 +14,8 @@
 #
 
 spring:
+  codec:
+    max-in-memory-size: 10MB # temporary
   application.name: sapl
   config:
     import: optional:classpath:git.properties
@@ -24,6 +26,16 @@ spring:
     cache-names:
       - ApiKeyCache
       - buckets
+
+  #data:
+  #  mongodb:
+  #    uri: mongodb://root:rooter@mongo:27017/sapl?authSource=admin
+  #    repositories:
+  #      enabled: false
+  r2dbc:
+    url: r2dbc:postgresql://postgres:5432/sapl
+    username: sapl
+    password: secret
 
 # --- Server ---
 
@@ -79,6 +91,7 @@ io.sapl:
     allow-api-key-auth: false
     allow-oauth2-auth: false
 
+    default-pdp-id: "default"
     # PDP ID routing (multi-tenant)
     # reject-on-missing-pdp-id: false
     # default-pdp-id: "default"
@@ -114,6 +127,13 @@ io.sapl:
   #   BUNDLES          - Monitor directory for .saplbundle files
   #   REMOTE_BUNDLES   - Fetch .saplbundle files from HTTP server
 
+  pdp.embedded:
+    enabled: true
+    pdp-config-type: DIRECTORY
+    config-path: /opt/forked-sapl-policy-engine/policies
+    policies-path: /opt/forked-sapl-policy-engine/policies
+    metrics-enabled: true
+
   # Hazelcast configuration for multi node usage. Important to sync the Attribute Repository
   # enabled: true/false                 - Enables or disabled the Hazelcast cluster
   # cluster-name: <name>                - The name of the Hazelcast cluster to find other nodes
@@ -131,7 +151,7 @@ io.sapl:
       auto-increment: true
 
     discovery:
-      mode: kubernetes   # multicast | tcpip | kubernetes
+      mode: tcpip   # multicast | tcpip | kubernetes
 
       kubernetes:
         service-name: sapl-hazelcast
@@ -142,17 +162,13 @@ io.sapl:
       #    - 10.0.0.10
       #    - 10.0.0.11
 
-  pdp.embedded:
-    enabled: true
-    pdp-config-type: DIRECTORY
-    config-path: .
-    policies-path: .
-    metrics-enabled: true
+  attributes:
+    storage: postgres # heap | persistent | mongo | postgres
 
     # --- Decision Reporting ---
-    # print-trace: false
+    #print-trace: true
     # print-json-report: false
-    # print-text-report: false
+    #print-text-report: true
     # pretty-print-reports: false
     # print-subscription-events: false
     # print-unsubscription-events: false
@@ -269,6 +285,6 @@ management:
 
 logging.level:
   "[io.sapl]": DEBUG
-  "[org.springframework]": DEBUG
+  "[org.springframework]": ERROR
   # Suppress unavoidable warning in GraalVM native images (no-op on HotSpot)
   "[io.micrometer.core.instrument.binder.jvm.JvmGcMetrics]": ERROR

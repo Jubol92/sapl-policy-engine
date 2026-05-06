@@ -525,6 +525,9 @@
 								<buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
 							</buildArgs>
 							<quickBuild>false</quickBuild>
+							<javaLauncher>
+        <version>17</version>
+    </javaLauncher>
 						</configuration>
 					</plugin>
 				</plugins>

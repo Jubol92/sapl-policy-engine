@@ -1,0 +1,65 @@
+====
+    Copyright (C) 2017-2026 Dominic Heutelbeck (dominic@heutelbeck.com)
+
+    SPDX-License-Identifier: Apache-2.0
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+====
+
+alice|user.age|34
+alice|user.nickname|Bob
+alice|user.department|Engineering
+alice|user.clearance|high
+alice|user.location|Berlin
+
+bob|user.age|29
+bob|user.nickname|Bobby
+bob|user.department|Sales
+bob|user.clearance|medium
+bob|user.location|Hamburg
+
+charlie|user.age|41
+charlie|user.nickname|Chuck
+charlie|user.department|Finance
+charlie|user.clearance|high
+charlie|user.location|Munich
+
+diana|user.age|25
+diana|user.nickname|Di
+diana|user.department|HR
+diana|user.clearance|low
+diana|user.location|Cologne
+
+eve|user.age|37
+eve|user.nickname|Evie
+eve|user.department|Security
+eve|user.clearance|critical
+eve|user.location|Frankfurt
+
+frank|user.age|31
+frank|user.nickname|Franky
+frank|user.department|Support
+frank|user.clearance|medium
+frank|user.location|Stuttgart
+
+grace|user.age|28
+grace|user.nickname|G
+grace|user.department|Research
+grace|user.clearance|high
+grace|user.location|Leipzig
+
+heidi|user.age|45
+heidi|user.nickname|H
+heidi|user.department|Management
+heidi|user.clearance|critical
+heidi|user.location|Dresden

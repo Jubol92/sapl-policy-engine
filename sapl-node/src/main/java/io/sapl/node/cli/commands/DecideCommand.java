@@ -105,6 +105,7 @@ public class DecideCommand implements Callable<Integer> {
                 out.flush();
             }).doOnError(e -> {
                 err.println(ERROR_EVALUATION_FAILED.formatted(e.getMessage()));
+                err.println(ERROR_EVALUATION_FAILED.formatted(e.getMessage()));
                 latch.countDown();
             }).doOnComplete(latch::countDown).subscribe();
 

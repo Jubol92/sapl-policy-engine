@@ -24,6 +24,7 @@ import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -43,23 +44,51 @@ public class HazelcastConfiguration {
     @Value("${io.sapl.hazelcast.network.port:5701}")
     private int port;
 
-    @Bean
-    public HazelcastInstance hazelcastInstance() {
-        if (!enabled) {
-            return Hazelcast.newHazelcastInstance(new Config());
-        }
+    @Value("${io.sapl.hazelcast.discovery.mode:multicast}")
+    private String mode;
 
+    @Bean
+    @ConditionalOnProperty(name = "io.sapl.hazelcast.enabled", havingValue = "true", matchIfMissing = true)
+    public HazelcastInstance hazelcastInstance() {
+        /*
+         * if (!enabled) {
+         * return Hazelcast.newHazelcastInstance(new Config());
+         * }
+         */
+
+        // Create the Hazelcast config and sets a cluster name. Other nodes identify
+        // over the same name
         Config config = new Config();
         config.setClusterName(clusterName);
 
+        // Creates the network config. Starts with the port 5701 (default) and allows
+        // the increment of a port
+        // Auto increment is important if the nodes are running on the same machine
+        // (e.g. testing purposes)
         NetworkConfig network = config.getNetworkConfig();
         network.setPort(port);
         network.setPortAutoIncrement(true);
 
         JoinConfig join = network.getJoin();
         join.getAutoDetectionConfig().setEnabled(false);
-        join.getMulticastConfig().setEnabled(false);
 
+        // todo: Multicast group and port configurable
+        if ("multicast".equals(mode)) {
+            join.getMulticastConfig().setEnabled(true).setMulticastGroup("224.2.2.3").setMulticastPort(54327);
+        } else {
+            join.getMulticastConfig().setEnabled(false);
+        }
+
+        // Still static
+        /*
+         * if ("tcpip".equals(mode)) {
+         * join.getTcpIpConfig().setEnabled(true).addMember("127.0.0.1:5701").addMember(
+         * "127.0.0.1:5702")
+         * .addMember("127.0.0.1:5703");
+         * } else {
+         * join.getTcpIpConfig().setEnabled(false);
+         * }
+         */
         join.getTcpIpConfig().setEnabled(true).addMember("127.0.0.1:5701").addMember("127.0.0.1:5702")
                 .addMember("127.0.0.1:5703");
 
