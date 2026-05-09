@@ -1,34 +1,21 @@
 package io.sapl.node.cli.commands;
 
-import io.sapl.api.attributes.AttributeKey;
 import io.sapl.api.attributes.AttributeStorage;
-import io.sapl.api.model.Value;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.web.reactive.function.client.WebClient;
 import picocli.CommandLine;
 import picocli.CommandLine.Mixin;
-import reactor.netty.http.HttpProtocol;
-
 import java.io.IOException;
 import java.util.List;
 
 @CommandLine.Command(name = "get", mixinStandardHelpOptions = true, description = "Gets an attribute from the attribute repository")
 public class GetAttributeCommand extends BaseAttributeCommand {
 
-    private static final WebClient webClient = WebClient.builder().clientConnector(
-            new ReactorClientHttpConnector(reactor.netty.http.client.HttpClient.create().protocol(HttpProtocol.H2C)))
-            .build();
-
-    @Mixin
-    StorageTransportMixin storage;
-
     @Mixin
     FileMixin file;
 
-    @CommandLine.Option(names = "--entity", required = true)
+    @CommandLine.Option(names = "--entity", required = true, description = "The subject or resource the attribute belongs to")
     String entity;
 
-    @CommandLine.Option(names = "--name")
+    @CommandLine.Option(names = "--name", description = "The attribute name e.g. role or user.role")
     String name;
 
     @CommandLine.Option(names = "--arguments", description = "Comma-separated list of arguments", defaultValue = "", split = ",")
@@ -66,8 +53,8 @@ public class GetAttributeCommand extends BaseAttributeCommand {
 
     private Integer getFromStorage(AttributeStorage attributeStorage) {
         try {
-            var args   = arguments.stream().filter(s -> !s.isEmpty()).map(this::parseArgument).toList();
-            var key    = new AttributeKey(Value.of(entity), name, args);
+            var args   = parseArguments(arguments);
+            var key    = buildKey(entity, name, args);
             var result = attributeStorage.get(key).block();
 
             if (!Boolean.TRUE.equals(showKey)) {
