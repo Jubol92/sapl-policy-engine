@@ -19,13 +19,19 @@ public class StorageTransportMixin {
 
     private static final ObjectMapper mapper;
 
+    // Inner enum to distinct the different provider types for picocli
+    private enum ProviderType {
+        postgres,
+        mongo
+    }
+
     static {
         mapper = new ObjectMapper();
         mapper.findAndRegisterModules();
         mapper.activateDefaultTyping(mapper.getPolymorphicTypeValidator(), ObjectMapper.DefaultTyping.NON_FINAL);
     }
 
-    @CommandLine.ArgGroup(exclusive = true, multiplicity = "1")
+    @CommandLine.ArgGroup(multiplicity = "1")
     Transport transport;
 
     static class Transport {
@@ -37,8 +43,8 @@ public class StorageTransportMixin {
     }
 
     static class StorageProvider {
-        @CommandLine.Option(names = "--provider", required = true, description = "Storage provider type: postgres | mongo")
-        String provider;
+        @CommandLine.Option(names = "--provider", required = true, description = "Supported storage provider types: ${COMPLETION-CANDIDATES}")
+        ProviderType provider;
 
         @CommandLine.Option(names = "--db-url", required = true, description = "Database URL (e.g. r2dbc:postgresql://localhost:5432/sapl or mongodb://localhost:27017/sapl)")
         String dbUrl;
@@ -46,17 +52,16 @@ public class StorageTransportMixin {
         @CommandLine.Option(names = "--db-username", description = "Database username — overrides credentials embedded in --db-url")
         String dbUsername;
 
-        @CommandLine.Option(names = "--db-password", description = "Database password — omit to be prompted interactively", interactive = true, echo = false, arity = "0..1")
+        @CommandLine.Option(names = "--db-password", description = "Database password — omit to be prompted interactively", interactive = true, arity = "0..1")
         char[] dbPassword;
     }
 
     public AttributeStorage createStorage() {
         var sp = transport.storageProvider;
-        return switch (sp.provider.toLowerCase()) {
-        case "postgres" -> createPostgresStorage(sp);
-        case "mongo"    -> createMongoStorage(sp);
-        default         ->
-            throw new IllegalArgumentException("Unknown provider: " + sp.provider + ". Supported: postgres, mongo");
+
+        return switch (sp.provider) {
+        case postgres -> createPostgresStorage(sp);
+        case mongo    -> createMongoStorage(sp);
         };
     }
 
@@ -74,12 +79,11 @@ public class StorageTransportMixin {
 
     private AttributeStorage createMongoStorage(StorageProvider sp) {
         var connectionString = new ConnectionString(sp.dbUrl);
+        var database         = connectionString.getDatabase() != null ? connectionString.getDatabase() : "sapl";
         var settingsBuilder  = MongoClientSettings.builder().applyConnectionString(connectionString);
         if (sp.dbUsername != null && sp.dbPassword != null) {
-            var db = connectionString.getDatabase() != null ? connectionString.getDatabase() : "sapl";
-            settingsBuilder.credential(MongoCredential.createCredential(sp.dbUsername, db, sp.dbPassword));
+            settingsBuilder.credential(MongoCredential.createCredential(sp.dbUsername, database, sp.dbPassword));
         }
-        var database    = connectionString.getDatabase() != null ? connectionString.getDatabase() : "sapl";
         var mongoClient = MongoClients.create(settingsBuilder.build());
         var template    = new ReactiveMongoTemplate(new SimpleReactiveMongoDatabaseFactory(mongoClient, database));
         return new MongoAttributeStorage(template);
