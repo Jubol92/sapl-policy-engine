@@ -1,7 +1,8 @@
 package io.sapl.node.cli.commands;
 
 import picocli.CommandLine;
-
+import picocli.CommandLine.Spec;
+import picocli.CommandLine.Model.CommandSpec;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.file.Files;
@@ -9,8 +10,8 @@ import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 public class FileMixin implements AutoCloseable {
-    @CommandLine.Spec
-    CommandLine.Model.CommandSpec spec;
+    @Spec
+    CommandSpec spec;
 
     @CommandLine.Option(names = "--output")
     Path file;
