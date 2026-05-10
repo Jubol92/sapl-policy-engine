@@ -7,6 +7,8 @@ import com.mongodb.MongoCredential;
 import com.mongodb.reactivestreams.client.MongoClients;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactoryOptions;
+import java.nio.CharBuffer;
+import java.util.Arrays;
 import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.attributes.storage.MongoAttributeStorage;
 import io.sapl.attributes.storage.PostgresAttributeStorage;
@@ -25,6 +27,8 @@ public class StorageTransportMixin {
         mongo
     }
 
+    // Hint: empfohlen für Jackson ObjectMapper ODER ObjectReader / ObjectWriter aus dem Mapper (ebenso thread-safe, immutable)
+    // Designentscheidung ausstehend
     static {
         mapper = new ObjectMapper();
         mapper.findAndRegisterModules();
@@ -34,6 +38,9 @@ public class StorageTransportMixin {
     @CommandLine.ArgGroup(multiplicity = "1")
     Transport transport;
 
+    // Hint: Picocli instanziert @ArgGroup Klassen intern per Reflection (Aufruf = new Transport())
+    // Nicht-statische Klasse müsste beim Aufruf ihre äußere Klasse kennen, aber Picocli ruft die Klasse
+    // nur über Class.forName(...<string>) auf, aber weiß noch nicht was genau drinnen ist.
     static class Transport {
         @CommandLine.Option(names = "--url", description = "API endpoint of a running SAPL node")
         String url;
@@ -52,16 +59,19 @@ public class StorageTransportMixin {
         @CommandLine.Option(names = "--db-username", description = "Database username — overrides credentials embedded in --db-url")
         String dbUsername;
 
+        // Hint: char[] wird von Picocli nativ bei interactive = true unterstützt
+        // Zusätzlich: char[] kann man direkt nach der Eingabe überschreiben und somit ist das PW nicht mehr im Speicher
+        // String hingegen bleibt im Heap bis der Garbage Collector es löscht (Sekunden/Minuten)
         @CommandLine.Option(names = "--db-password", description = "Database password — omit to be prompted interactively", interactive = true, arity = "0..1")
         char[] dbPassword;
     }
 
     public AttributeStorage createStorage() {
-        var sp = transport.storageProvider;
+        var provider = transport.storageProvider;
 
-        return switch (sp.provider) {
-        case postgres -> createPostgresStorage(sp);
-        case mongo    -> createMongoStorage(sp);
+        return switch (provider.provider) {
+        case postgres -> createPostgresStorage(provider);
+        case mongo    -> createMongoStorage(provider);
         };
     }
 
@@ -71,18 +81,26 @@ public class StorageTransportMixin {
             optionsBuilder.option(ConnectionFactoryOptions.USER, provider.dbUsername);
         }
         if (provider.dbPassword != null) {
-            optionsBuilder.option(ConnectionFactoryOptions.PASSWORD, new String(provider.dbPassword));
+            try {
+                optionsBuilder.option(ConnectionFactoryOptions.PASSWORD, CharBuffer.wrap(provider.dbPassword));
+            } finally {
+                Arrays.fill(provider.dbPassword, '\0');
+            }
         }
         return new PostgresAttributeStorage(DatabaseClient.create(ConnectionFactories.get(optionsBuilder.build())),
                 mapper);
     }
 
-    private AttributeStorage createMongoStorage(StorageProvider sp) {
-        var connectionString = new ConnectionString(sp.dbUrl);
+    private AttributeStorage createMongoStorage(StorageProvider provider) {
+        var connectionString = new ConnectionString(provider.dbUrl);
         var database         = connectionString.getDatabase() != null ? connectionString.getDatabase() : "sapl";
         var settingsBuilder  = MongoClientSettings.builder().applyConnectionString(connectionString);
-        if (sp.dbUsername != null && sp.dbPassword != null) {
-            settingsBuilder.credential(MongoCredential.createCredential(sp.dbUsername, database, sp.dbPassword));
+        if (provider.dbUsername != null && provider.dbPassword != null) {
+            try {
+                settingsBuilder.credential(MongoCredential.createCredential(provider.dbUsername, database, provider.dbPassword));
+            } finally {
+                Arrays.fill(provider.dbPassword, '\0');
+            }
         }
         var mongoClient = MongoClients.create(settingsBuilder.build());
         var template    = new ReactiveMongoTemplate(new SimpleReactiveMongoDatabaseFactory(mongoClient, database));
