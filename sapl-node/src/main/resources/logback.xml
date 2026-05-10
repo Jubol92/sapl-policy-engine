@@ -3,6 +3,8 @@
          NopStatusListener suppresses the |-INFO / |-WARN internal status output.
          Spring Boot then replaces this with logback-spring.xml for server mode.
          CLI mode: configureCliLogging() calls context.reset() and overrides everything. -->
+    <!-- ##### Eigene Konfiguration wegen Reflection: NopStatusListener muss in reflect-config.json registriert sein,
+         da Logback die Klasse per OptionHelper.instantiateByClassName() lädt (kein direkter new-Aufruf). -->
     <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">

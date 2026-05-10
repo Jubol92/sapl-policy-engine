@@ -15,6 +15,7 @@ import io.sapl.attributes.storage.PostgresAttributeStorage;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.SimpleReactiveMongoDatabaseFactory;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.r2dbc.core.binding.BindMarkersFactory;
 import picocli.CommandLine;
 
 public class StorageTransportMixin {
@@ -27,7 +28,8 @@ public class StorageTransportMixin {
         mongo
     }
 
-    // Hint: empfohlen für Jackson ObjectMapper ODER ObjectReader / ObjectWriter aus dem Mapper (ebenso thread-safe, immutable)
+    // Hint: empfohlen für Jackson ObjectMapper ODER ObjectReader / ObjectWriter aus
+    // dem Mapper (ebenso thread-safe, immutable)
     // Designentscheidung ausstehend
     static {
         mapper = new ObjectMapper();
@@ -35,12 +37,16 @@ public class StorageTransportMixin {
         mapper.activateDefaultTyping(mapper.getPolymorphicTypeValidator(), ObjectMapper.DefaultTyping.NON_FINAL);
     }
 
+    // Hint: multiplicity = 1 --> Entweder oder d.h. entweder --url oder --provider
     @CommandLine.ArgGroup(multiplicity = "1")
     Transport transport;
 
-    // Hint: Picocli instanziert @ArgGroup Klassen intern per Reflection (Aufruf = new Transport())
-    // Nicht-statische Klasse müsste beim Aufruf ihre äußere Klasse kennen, aber Picocli ruft die Klasse
-    // nur über Class.forName(...<string>) auf, aber weiß noch nicht was genau drinnen ist.
+    // Hint: Picocli instanziert @ArgGroup Klassen intern per Reflection (Aufruf =
+    // new Transport())
+    // Nicht-statische Klasse müsste beim Aufruf ihre äußere Klasse kennen, aber
+    // Picocli ruft die Klasse
+    // nur über Class.forName(...<string>) auf, aber weiß noch nicht was genau
+    // drinnen ist.
     static class Transport {
         @CommandLine.Option(names = "--url", description = "API endpoint of a running SAPL node")
         String url;
@@ -60,8 +66,10 @@ public class StorageTransportMixin {
         String dbUsername;
 
         // Hint: char[] wird von Picocli nativ bei interactive = true unterstützt
-        // Zusätzlich: char[] kann man direkt nach der Eingabe überschreiben und somit ist das PW nicht mehr im Speicher
-        // String hingegen bleibt im Heap bis der Garbage Collector es löscht (Sekunden/Minuten)
+        // Zusätzlich: char[] kann man direkt nach der Eingabe überschreiben und somit
+        // ist das PW nicht mehr im Speicher
+        // String hingegen bleibt im Heap bis der Garbage Collector es löscht
+        // (Sekunden/Minuten)
         @CommandLine.Option(names = "--db-password", description = "Database password — omit to be prompted interactively", interactive = true, arity = "0..1")
         char[] dbPassword;
     }
@@ -80,6 +88,9 @@ public class StorageTransportMixin {
         if (provider.dbUsername != null) {
             optionsBuilder.option(ConnectionFactoryOptions.USER, provider.dbUsername);
         }
+
+        // Hint: For security reasons. As soon as the password is sent to the host, it
+        // will be emptied and not kept in memory
         if (provider.dbPassword != null) {
             try {
                 optionsBuilder.option(ConnectionFactoryOptions.PASSWORD, CharBuffer.wrap(provider.dbPassword));
@@ -87,7 +98,13 @@ public class StorageTransportMixin {
                 Arrays.fill(provider.dbPassword, '\0');
             }
         }
-        return new PostgresAttributeStorage(DatabaseClient.create(ConnectionFactories.get(optionsBuilder.build())),
+        // BindMarkersFactory explizit setzen — DatabaseClient.create() würde
+        // SpringFactoriesLoader
+        // nutzen, was spring.factories aus allen JARs lädt und im Native Image zu
+        // Cascade-Fehlern führt.
+        return new PostgresAttributeStorage(
+                DatabaseClient.builder().connectionFactory(ConnectionFactories.get(optionsBuilder.build()))
+                        .bindMarkers(BindMarkersFactory.indexed("$", 1)).build(),
                 mapper);
     }
 
@@ -95,15 +112,19 @@ public class StorageTransportMixin {
         var connectionString = new ConnectionString(provider.dbUrl);
         var database         = connectionString.getDatabase() != null ? connectionString.getDatabase() : "sapl";
         var settingsBuilder  = MongoClientSettings.builder().applyConnectionString(connectionString);
+
+        // Hint: For security reasons. As soon as the password is sent to the host, it
+        // will be emptied and not kept in memory
         if (provider.dbUsername != null && provider.dbPassword != null) {
             try {
-                settingsBuilder.credential(MongoCredential.createCredential(provider.dbUsername, database, provider.dbPassword));
+                settingsBuilder.credential(
+                        MongoCredential.createCredential(provider.dbUsername, database, provider.dbPassword));
             } finally {
                 Arrays.fill(provider.dbPassword, '\0');
             }
         }
         var mongoClient = MongoClients.create(settingsBuilder.build());
         var template    = new ReactiveMongoTemplate(new SimpleReactiveMongoDatabaseFactory(mongoClient, database));
-        return new MongoAttributeStorage(template);
+        return new MongoAttributeStorage(template, mapper);
     }
 }

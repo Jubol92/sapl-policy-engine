@@ -25,7 +25,9 @@ public class DeleteAttributeCommand extends BaseAttributeCommand {
         return deleteViaProvider();
     }
 
+    // Hint: Args werden in API komplett ignoriert. tbd
     private Integer deleteViaApi() {
+        // Hint: sendet einen DELETE-Requests an den Endpoint der Push API
         var response = webClient.delete().uri(storage.transport.url + "/api/attributes/entity/" + entity + "/" + name)
                 .retrieve().toEntity(String.class).block();
 
@@ -45,6 +47,8 @@ public class DeleteAttributeCommand extends BaseAttributeCommand {
         }
     }
 
+    // Hint: Hilfsmethoden buildKey(), parseArguments() werden über die abstrakte
+    // Klasse geladen, da mehrfache Verwendung in Subcommands
     private Integer deleteFromStorage(AttributeStorage attributeStorage) {
         try {
             var args = parseArguments(arguments);

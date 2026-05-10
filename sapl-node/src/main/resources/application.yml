@@ -134,8 +134,8 @@ io.sapl:
   pdp.embedded:
     enabled: true
     pdp-config-type: DIRECTORY
-    config-path: /opt/forked-sapl-policy-engine/policies
-    policies-path: /opt/forked-sapl-policy-engine/policies
+    config-path: /policies
+    policies-path: /policies
     metrics-enabled: true
 
   # Hazelcast configuration for multi node usage. Important to sync the Attribute Repository

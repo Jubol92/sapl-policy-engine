@@ -17,45 +17,43 @@
  */
 package io.sapl.attributes.storage;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.sapl.api.attributes.AttributeKey;
 import io.sapl.api.attributes.AttributeStorage;
 import io.sapl.api.attributes.PersistedAttribute;
+import io.sapl.api.model.Value;
+import lombok.SneakyThrows;
+import org.bson.Document;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.Map;
 
 public class MongoAttributeStorage implements AttributeStorage {
     private final ReactiveMongoTemplate mongo;
+    private final ObjectMapper          mapper;
 
-    public MongoAttributeStorage(ReactiveMongoTemplate mongo) {
-        this.mongo = mongo;
+    public MongoAttributeStorage(ReactiveMongoTemplate mongo, ObjectMapper mapper) {
+        this.mongo  = mongo;
+        this.mapper = mapper;
     }
 
-    // tbd
     @Override
     public Mono<PersistedAttribute> get(AttributeKey key) {
-        return mongo.findById(getId(key), PersistedAttribute.class, "attributes");
+        return mongo.find(Query.query(Criteria.where("_id").is(getId(key))), Document.class, "attributes").next()
+                .mapNotNull(doc -> deserialize(doc.getString("data")));
     }
 
-    // Puts the key into the storage. Needs to be a valid MongoDB document
     @Override
+    @SneakyThrows
     public Mono<Void> put(AttributeKey key, PersistedAttribute value) {
-        Map<String, Object> document = new HashMap<>();
-
+        var document = new Document();
         document.put("_id", getId(key));
-        document.put("entity", key.entity());
-        document.put("attribute", key.attributeName());
-        document.put("value", value.value());
-        document.put("timestamp", value.timestamp());
-        document.put("ttl", value.ttl());
-        document.put("timeoutStrategy", value.timeoutStrategy());
-        document.put("timeoutDeadline", value.timeoutDeadline());
-
+        document.put("data", mapper.writeValueAsString(value));
         return mongo.save(document, "attributes").then();
     }
 
@@ -66,14 +64,48 @@ public class MongoAttributeStorage implements AttributeStorage {
         return mongo.remove(query, "attributes").then();
     }
 
-    // tbd
     @Override
     public Flux<Map.Entry<AttributeKey, PersistedAttribute>> findAll() {
-        return Flux.empty();
+        return mongo.find(new Query(), Document.class, "attributes").mapNotNull(doc -> {
+            var persisted = deserialize(doc.getString("data"));
+            if (persisted == null)
+                return null;
+            return Map.entry(parseId(doc.getString("_id")), persisted);
+        });
     }
 
-    // Helper method to avoid inconsistent keys in the DB
+    // Parses "_id" back to AttributeKey. Format: entity.toString():attributeName
+    // Entity is "_" for null or a JSON string e.g. "alice".
+    private AttributeKey parseId(String id) {
+        if (id == null)
+            return null;
+        if (id.startsWith("_:")) {
+            return new AttributeKey(null, id.substring(2), new ArrayList<>());
+        }
+        int colonIdx;
+        if (id.charAt(0) == '"') {
+            int close = 1;
+            while (close < id.length() && (id.charAt(close) != '"' || id.charAt(close - 1) == '\\')) {
+                close++;
+            }
+            colonIdx = close + 1;
+        } else {
+            colonIdx = id.indexOf(':');
+        }
+        var entityJson    = id.substring(0, colonIdx);
+        var attributeName = id.substring(colonIdx + 1);
+        var entity        = Value.of(entityJson.replaceAll("^\"|\"$", ""));
+        return new AttributeKey(entity, attributeName, new ArrayList<>());
+    }
+
     private String getId(AttributeKey key) {
         return (key.entity() == null ? "_" : key.entity().toString()) + ":" + key.attributeName();
+    }
+
+    @SneakyThrows
+    private PersistedAttribute deserialize(String json) {
+        if (json == null)
+            return null;
+        return mapper.readValue(json, PersistedAttribute.class);
     }
 }

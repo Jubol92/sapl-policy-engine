@@ -25,6 +25,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.util.ArrayList;
 import java.util.Map;
 
 public class PostgresAttributeStorage implements AttributeStorage {
@@ -38,7 +39,7 @@ public class PostgresAttributeStorage implements AttributeStorage {
 
     @Override
     public Mono<PersistedAttribute> get(AttributeKey key) {
-        // :key :value are replacy by the bind
+        // :key :value are replaced by the bind
         return client.sql("SELECT value FROM attributes WHERE key = :key").bind("key", serializeKey(key)).map(row -> {
             String json = row.get("value", String.class);
             return deserialize(json);
@@ -94,9 +95,13 @@ public class PostgresAttributeStorage implements AttributeStorage {
         }
     }
 
+    // Normalisiert arguments auf ArrayList — stellt sicher dass CLI-Publish und
+    // Server-Lookup denselben JSON-Key produzieren, unabhängig von der internen
+    // List-Implementierung (ImmutableCollections$ListN, EmptyList, etc.).
     private String serializeKey(AttributeKey key) {
         try {
-            return mapper.writeValueAsString(key);
+            var normalized = new AttributeKey(key.entity(), key.attributeName(), new ArrayList<>(key.arguments()));
+            return mapper.writeValueAsString(normalized);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

@@ -21,10 +21,13 @@ public abstract class BaseAttributeCommand implements Callable<Integer> {
             new ReactorClientHttpConnector(reactor.netty.http.client.HttpClient.create().protocol(HttpProtocol.H2C)))
             .build();
 
+    // Hint: Storageimplementierung muss in jeder Subklasse vorhanden sein, da
+    // derzeit der einzige wirkliche Weg
     @CommandLine.Mixin
     protected StorageTransportMixin storage;
 
-    // Method is used in several subcommands of the attribute command
+    // Hint: Methode wird von Subcommands oft gebraucht. Damit Änderungen nur an
+    // einer Stelle erfolgen hier implementiert.
     protected Value parseArgument(String argument) {
         if (argument.equalsIgnoreCase("true"))
             return Value.of(true);
@@ -49,11 +52,18 @@ public abstract class BaseAttributeCommand implements Callable<Integer> {
         }
     }
 
-    // Helper method to parse the given arguments via Picocli into the right list
+    // Hint: parsed die Argument, welche an Picocli in der form arg1,arg2,...,argN
+    // übergeben werden
+    // als List<Value> damit diese im Storage verwendbar sind
     protected List<Value> parseArguments(List<String> arguments) {
         return arguments.stream().filter(s -> !s.isEmpty()).map(this::parseArgument).toList();
     }
 
+    // Hint: baut den Attributekey, welcher als primary key für die Storages
+    // gebraucht wird
+    // entity + name + args --> Eindeutig
+    // zu klären: args können weggelassen werden und es können alle keys die matchen
+    // ausgegeben werden?
     protected AttributeKey buildKey(String entity, String name, List<Value> args) {
         return new AttributeKey(Value.of(entity), name, args);
     }
