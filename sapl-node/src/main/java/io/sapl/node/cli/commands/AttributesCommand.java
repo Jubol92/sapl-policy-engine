@@ -10,6 +10,8 @@ import java.util.concurrent.Callable;
         " Modifies, publishes, deletes or gets attribute from a given attribute storage." }, subcommands = {
                 PublishAttributeCommand.class, DeleteAttributeCommand.class, GetAttributeCommand.class })
 
+// Hint: Basis Command ohne eigene Optionen. Es dient nur zur Eingliederung der Subcommand damit es die Aufrufe
+// attributes publish, attributes get und attribute delete gibt
 // @formatter:on
 public class AttributesCommand implements Callable<Integer> {
     @Spec

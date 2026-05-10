@@ -43,8 +43,8 @@ public class UserPolicyInformationPoint {
     }
 
     @Attribute(name = "role")
-    public Flux<Value> role(Value subject, Value... args) {
-        log.info("PIP role called -> should NOT happen if repo fallback works");
+    public Flux<Value> role(Value subject, Value arg) {
+        log.info("PIP role called with arg: {}", arg);
         return Flux.empty();
     }
 

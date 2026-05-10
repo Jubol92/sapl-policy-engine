@@ -35,7 +35,7 @@ public class PdpConfiguration {
             throws AttributeBrokerException {
 
         return PolicyDecisionPointBuilder.withDefaults()
-                .withDirectorySource(Path.of("/opt/forked-sapl-policy-engine/policies"))
+                .withDirectorySource(Path.of(System.getProperty("user.home"), ".sapl", "policies"))
                 .withAttributeBroker(attributeBroker)
                 // .withPolicyInformationPoint(new UserPolicyInformationPoint())
                 .build();

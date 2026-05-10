@@ -18,9 +18,13 @@ public class GetAttributeCommand extends BaseAttributeCommand {
     @CommandLine.Option(names = "--name", description = "The attribute name e.g. role or user.role")
     String name;
 
+    // Hint: Wichtig, wenn man mehrere Parameter mit übergeben kann ein Separator zu
+    // haben
     @CommandLine.Option(names = "--arguments", description = "Comma-separated list of arguments", defaultValue = "", split = ",")
     List<String> arguments;
 
+    // Hint: Eine Idee. Zeige nicht nur die Attribute an, sondern auch die Attribute
+    // Keys. Es macht es manchmal einfacher
     @CommandLine.Option(names = "--with-key", description = "Displays the stored key along with the value.")
     Boolean showKey;
 
@@ -34,6 +38,8 @@ public class GetAttributeCommand extends BaseAttributeCommand {
         });
     }
 
+    // Hint: Alte anfängliche Implementierung für schnelle Tests - nicht ausgereift.
+    // Wird tendenziell eher entfernt. Noch klären!
     private Integer getViaApi() throws IOException {
         var response = webClient.get().uri(storage.transport.url + "/api/attributes/entity/" + entity).retrieve()
                 .toEntity(String.class).block();
@@ -51,12 +57,15 @@ public class GetAttributeCommand extends BaseAttributeCommand {
         }
     }
 
+    // Hint: Hilfesmethoden buildKey(), parseArguments() werden über die abstrakte
+    // Klasse geladen, da mehrfache Verwendung in Subcommands
     private Integer getFromStorage(AttributeStorage attributeStorage) {
         try {
             var args   = parseArguments(arguments);
             var key    = buildKey(entity, name, args);
             var result = attributeStorage.get(key).block();
 
+            // Show the attribute key only if it's explicitly set as an option
             if (!Boolean.TRUE.equals(showKey)) {
                 print(result != null ? result.toString() : "Not found.");
             } else {

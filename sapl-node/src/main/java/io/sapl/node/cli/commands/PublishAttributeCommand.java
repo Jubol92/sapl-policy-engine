@@ -50,7 +50,7 @@ public class PublishAttributeCommand extends BaseAttributeCommand {
                     "ttl": %s,
                     "strategy": "%s"
                 }
-                """.formatted(entity, name, value, ttl, strategy);
+                """.formatted(entity, name, value, ttl < 0 ? Long.MAX_VALUE / 1_000_000_000L : ttl, strategy);
 
         var response = webClient.post().uri(storage.transport.url + "/api/attributes")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(json).retrieve().toEntity(String.class).block();
@@ -67,6 +67,8 @@ public class PublishAttributeCommand extends BaseAttributeCommand {
         }
     }
 
+    // Hint: Hilfesmethoden buildKey(), parseArguments() werden über die abstrakte
+    // Klasse geladen, da mehrfache Verwendung in Subcommands
     private Integer publishToStorage(AttributeStorage attributeStorage) {
         try {
             var args      = parseArguments(arguments);

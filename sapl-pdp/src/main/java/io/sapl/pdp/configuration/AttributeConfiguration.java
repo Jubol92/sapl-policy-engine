@@ -54,8 +54,8 @@ public class AttributeConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public AttributeStorage mongoStorage(ReactiveMongoTemplate template) {
-        return new MongoAttributeStorage(template);
+    public AttributeStorage mongoStorage(ReactiveMongoTemplate template, ObjectMapper mapper) {
+        return new MongoAttributeStorage(template, mapper);
     }
 
     @Bean
