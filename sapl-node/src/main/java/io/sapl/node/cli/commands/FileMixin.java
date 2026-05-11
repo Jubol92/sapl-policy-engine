@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
+//tbd: wildcards gehen noch nicht
 public class FileMixin implements AutoCloseable {
     @Spec
     CommandSpec spec;
