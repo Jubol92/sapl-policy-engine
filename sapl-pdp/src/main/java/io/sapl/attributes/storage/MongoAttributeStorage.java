@@ -64,6 +64,7 @@ public class MongoAttributeStorage implements AttributeStorage {
         return mongo.remove(query, "attributes").then();
     }
 
+    // Gets all documents from the collection attributes within the MongoDB
     @Override
     public Flux<Map.Entry<AttributeKey, PersistedAttribute>> findAll() {
         return mongo.find(new Query(), Document.class, "attributes").mapNotNull(doc -> {
@@ -77,24 +78,40 @@ public class MongoAttributeStorage implements AttributeStorage {
     // Parses "_id" back to AttributeKey. Format: entity.toString():attributeName
     // Entity is "_" for null or a JSON string e.g. "alice".
     private AttributeKey parseId(String id) {
-        if (id == null)
+        int colonPos;
+
+        // No key - abort
+        if (id == null) {
             return null;
+        }
+
+        // Global Attribute - key starts with _ when entity = null
         if (id.startsWith("_:")) {
             return new AttributeKey(null, id.substring(2), new ArrayList<>());
         }
-        int colonIdx;
+
+        // remove the opening and closing quotation marks of the entity because a : can be also an attribute like user:role
+        // the loop runs until the next quotation marks is found OR an escape sequence \\ ist detected
+        // hint: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16
+        //       " a l i c e " : u s e  r  :  r  o  l  e
+        //                   ^
+        //                   |
+        //                 stop here
         if (id.charAt(0) == '"') {
             int close = 1;
             while (close < id.length() && (id.charAt(close) != '"' || id.charAt(close - 1) == '\\')) {
                 close++;
             }
-            colonIdx = close + 1;
+            colonPos = close + 1;
         } else {
-            colonIdx = id.indexOf(':');
+            // most common case: the entity is without a quotation marks or starts with _
+            colonPos = id.indexOf(':');
         }
-        var entityJson    = id.substring(0, colonIdx);
-        var attributeName = id.substring(colonIdx + 1);
-        var entity        = Value.of(entityJson.replaceAll("^\"|\"$", ""));
+
+        var entityJson    = id.substring(0, colonPos); // string before first :
+        var attributeName = id.substring(colonPos + 1); // string after the first :
+        var entity        = Value.of(entityJson.replaceAll("^\"|\"$", "")); // remove all quotation marks
+
         return new AttributeKey(entity, attributeName, new ArrayList<>());
     }
 

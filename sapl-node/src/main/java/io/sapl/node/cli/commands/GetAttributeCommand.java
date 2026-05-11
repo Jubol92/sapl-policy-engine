@@ -57,7 +57,7 @@ public class GetAttributeCommand extends BaseAttributeCommand {
         }
     }
 
-    // Hint: Hilfesmethoden buildKey(), parseArguments() werden über die abstrakte
+    // Hint: Hilfsmethoden buildKey(), parseArguments() werden über die abstrakte
     // Klasse geladen, da mehrfache Verwendung in Subcommands
     private Integer getFromStorage(AttributeStorage attributeStorage) {
         try {

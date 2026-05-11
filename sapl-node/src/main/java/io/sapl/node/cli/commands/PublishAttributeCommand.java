@@ -67,7 +67,7 @@ public class PublishAttributeCommand extends BaseAttributeCommand {
         }
     }
 
-    // Hint: Hilfesmethoden buildKey(), parseArguments() werden über die abstrakte
+    // Hint: Hilfsmethoden buildKey(), parseArguments() werden über die abstrakte
     // Klasse geladen, da mehrfache Verwendung in Subcommands
     private Integer publishToStorage(AttributeStorage attributeStorage) {
         try {
