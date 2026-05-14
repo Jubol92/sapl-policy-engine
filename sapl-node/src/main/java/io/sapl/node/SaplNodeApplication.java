@@ -146,10 +146,9 @@ public class SaplNodeApplication {
                 COMMANDS_PACKAGE + "BenchmarkCommand", OPTIONS_PACKAGE + "BenchmarkOptions",
                 OPTIONS_PACKAGE + "BundleVerificationOptions", COMMANDS_PACKAGE + "CheckCommand",
                 COMMANDS_PACKAGE + "DecideCommand", COMMANDS_PACKAGE + "DecideOnceCommand",
-                COMMANDS_PACKAGE + "DeleteAttributeCommand", COMMANDS_PACKAGE + "GeneratePoliciesCommand",
-                COMMANDS_PACKAGE + "GetAttributeCommand", OPTIONS_PACKAGE + "NamedSubscriptionOptions",
-                COMMANDS_PACKAGE + "LoadtestCommand", OPTIONS_PACKAGE + "PdpOptions",
-                OPTIONS_PACKAGE + "PolicySourceOptions",
+                COMMANDS_PACKAGE + "DeleteAttributeCommand", COMMANDS_PACKAGE + "GetAttributeCommand",
+                OPTIONS_PACKAGE + "NamedSubscriptionOptions", COMMANDS_PACKAGE + "LoadtestCommand",
+                OPTIONS_PACKAGE + "PdpOptions", OPTIONS_PACKAGE + "PolicySourceOptions",
                 COMMANDS_PACKAGE + "PublishAttributeCommand", OPTIONS_PACKAGE + "RemoteConnectionOptions",
                 OPTIONS_PACKAGE + "RemoteConnectionOptions$AuthOptions", COMMANDS_PACKAGE + "ServerCommand",
                 OPTIONS_PACKAGE + "SubscriptionInputOptions", COMMANDS_PACKAGE + "TestCommand" };
