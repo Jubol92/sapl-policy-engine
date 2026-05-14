@@ -48,7 +48,7 @@ public class HazelcastConfiguration {
     private String mode;
 
     @Bean
-    @ConditionalOnProperty(name = "io.sapl.hazelcast.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnProperty(name = "io.sapl.hazelcast.enabled", havingValue = "true")
     public HazelcastInstance hazelcastInstance() {
         /*
          * if (!enabled) {
@@ -79,18 +79,12 @@ public class HazelcastConfiguration {
             join.getMulticastConfig().setEnabled(false);
         }
 
-        // Still static
-        /*
-         * if ("tcpip".equals(mode)) {
-         * join.getTcpIpConfig().setEnabled(true).addMember("127.0.0.1:5701").addMember(
-         * "127.0.0.1:5702")
-         * .addMember("127.0.0.1:5703");
-         * } else {
-         * join.getTcpIpConfig().setEnabled(false);
-         * }
-         */
-        join.getTcpIpConfig().setEnabled(true).addMember("127.0.0.1:5701").addMember("127.0.0.1:5702")
-                .addMember("127.0.0.1:5703");
+        if ("tcpip".equals(mode)) {
+            join.getTcpIpConfig().setEnabled(true).addMember("127.0.0.1:5701").addMember("127.0.0.1:5702")
+                    .addMember("127.0.0.1:5703");
+        } else {
+            join.getTcpIpConfig().setEnabled(false);
+        }
 
         return Hazelcast.newHazelcastInstance(config);
     }

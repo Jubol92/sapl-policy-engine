@@ -47,7 +47,7 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.*;
 public class AttributeConfiguration {
 
     @Bean
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "heap")
+    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "heap", matchIfMissing = true)
     public AttributeStorage heapStorage() {
         return new HeapAttributeStorage();
     }
@@ -79,11 +79,13 @@ public class AttributeConfiguration {
     }
 
     @Bean
+    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
     public DatabaseClient databaseClient(ConnectionFactory connectionFactory) {
         return DatabaseClient.create(connectionFactory);
     }
 
     @Bean
+    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
     public ConnectionFactory connectionFactory() {
         return ConnectionFactories.get(ConnectionFactoryOptions.builder().option(DRIVER, "postgresql")
                 .option(HOST, "localhost").option(PORT, 5432).option(USER, "sapl").option(PASSWORD, "secret")
