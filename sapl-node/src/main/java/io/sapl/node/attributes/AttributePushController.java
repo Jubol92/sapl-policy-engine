@@ -20,11 +20,8 @@ package io.sapl.node.attributes;
 import io.sapl.api.attributes.AttributeRepository;
 import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
 import io.sapl.api.model.Value;
-import io.sapl.hazelcast.AttributeDistributionService;
-import io.sapl.hazelcast.HazelcastNodeId;
-import io.sapl.hazelcast.PublishAttributeEvent;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -35,22 +32,12 @@ import java.util.Map;
 import java.util.Objects;
 
 @Slf4j
+@RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/attributes")
 public class AttributePushController {
-    private final AttributeRepository          repository;
-    private final AttributeDistributionService distribution;
-    private final HazelcastNodeId              nodeId;
+    private final AttributeRepository repository;
 
-    public AttributePushController(AttributeRepository repository,
-            ObjectProvider<AttributeDistributionService> distribution,
-            HazelcastNodeId nodeId) {
-        this.repository   = repository;
-        this.distribution = distribution.getIfAvailable();
-        this.nodeId       = nodeId;
-    }
-
-    @SuppressWarnings("unused")
     @PostMapping
     public Mono<String> publish(@RequestBody PushRequest request) {
         Value  entity = request.getEntity() == null ? null : Value.of(request.getEntity());
@@ -67,35 +54,21 @@ public class AttributePushController {
 
         log.debug("Publishing to repository {}", repository.hashCode());
 
-        return repository.publishAttribute(entity, name, arguments, value, ttl, strategy).doOnSuccess(v -> {
-            if (distribution != null) {
-                log.info("Distribution: {}", distribution);
-                PublishAttributeEvent event = new PublishAttributeEvent();
-                event.setNodeId(nodeId.getNodeId());
-                event.setEntity(request.getEntity());
-                event.setAttributeName(name);
-                event.setValue(request.getAttributeValue());
-                event.setTtl(ttl.getSeconds());
-                event.setStrategy(strategy.name());
-                distribution.publish(event);
-            }
-        }).thenReturn("Attribute published to repository");
+        return repository.publishAttribute(entity, name, arguments, value, ttl, strategy)
+                .thenReturn("Attribute published to repository");
     }
 
-    @SuppressWarnings("unused")
     @DeleteMapping("/entity/{entity}/{attribute}")
     public Mono<String> deleteAttribute(@PathVariable String entity, @PathVariable String attribute) {
         return repository.removeAttribute(convertValue(entity), attribute)
                 .thenReturn("Attribute removed from repository");
     }
 
-    @SuppressWarnings("unused")
     @DeleteMapping("/attribute/{attribute}")
     public Mono<String> deleteAttribute(@PathVariable String attribute) {
         return repository.removeAttribute(attribute).thenReturn("Attribute removed from repository");
     }
 
-    @SuppressWarnings("unused")
     @GetMapping("/entity/{entity}")
     public Flux<Map<String, Object>> findAttributeByEntity(@PathVariable String entity) {
         return repository.getAttributeForEntity(Value.of(entity))
@@ -104,7 +77,6 @@ public class AttributePushController {
                         attribute.timeoutDeadline()));
     }
 
-    @SuppressWarnings("unused")
     @GetMapping
     public Flux<Map<String, Object>> findAllAttributes() {
         return repository.getAllAttributes().map(entry -> Map.of("key", entry.getKey(), "value",

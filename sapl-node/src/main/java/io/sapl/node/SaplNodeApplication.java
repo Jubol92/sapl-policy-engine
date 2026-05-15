@@ -20,7 +20,6 @@ package io.sapl.node;
 import java.util.Arrays;
 import java.util.Set;
 
-import io.sapl.hazelcast.HazelcastConfiguration;
 import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.RuntimeHintsRegistrar;
@@ -62,9 +61,9 @@ import org.springframework.context.annotation.Import;
                 "org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration",
                 "org.springframework.boot.autoconfigure.mongo.MongoReactiveAutoConfiguration",
                 "org.springframework.boot.autoconfigure.data.mongo.MongoReactiveDataAutoConfiguration" })
-@ComponentScan({ "io.sapl.node", "io.sapl.server", "io.sapl.hazelcast" })
+@ComponentScan({ "io.sapl.node", "io.sapl.server" })
 @EnableConfigurationProperties(SaplNodeProperties.class)
-@Import({ AttributeConfiguration.class, HazelcastConfiguration.class })
+@Import({ AttributeConfiguration.class })
 public class SaplNodeApplication {
 
     private static final String SERVER_COMMAND = "server";

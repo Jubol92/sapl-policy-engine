@@ -138,34 +138,6 @@ io.sapl:
     policies-path: /policies
     metrics-enabled: true
 
-  # Hazelcast configuration for multi node usage. Important to sync the Attribute Repository
-  # enabled: true/false                 - Enables or disabled the Hazelcast cluster
-  # cluster-name: <name>                - The name of the Hazelcast cluster to find other nodes
-  # topic-name: <name>                  - The name of the distributed topic for the distributed map
-  # network.port: <int>                 - The port the Hazelcast cluster is listening. Default: 5701
-  # netẃork.auto-increment: true/false  - Increments if the given port is already used
-  # network.discovery: <name>   >       - The discovery method to find other nodes. Kubernetes needs kubernetes and Multicast multicast.
-  hazelcast:
-    enabled: true
-    cluster-name: sapl-cluster
-    topic-name: sapl-attribute-events
-
-    network:
-      port: 5701
-      auto-increment: true
-
-    discovery:
-      mode: tcpip   # multicast | tcpip | kubernetes
-
-      kubernetes:
-        service-name: sapl-hazelcast
-        namespace: default
-
-      #tcpip:
-      #  members:
-      #    - 10.0.0.10
-      #    - 10.0.0.11
-
   attributes:
     storage: postgres # heap | persistent | mongo | postgres
 
