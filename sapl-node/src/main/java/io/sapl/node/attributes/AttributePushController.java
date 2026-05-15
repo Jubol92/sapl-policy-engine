@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributes.push;
+package io.sapl.node.attributes;
 
 import io.sapl.api.attributes.AttributeRepository;
 import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
@@ -38,27 +38,21 @@ import java.util.Objects;
 @RestController
 @RequestMapping("/api/attributes")
 public class AttributePushController {
-    private final AttributeRepository repository;
-    // private final ObjectMapper mapper;
+    private final AttributeRepository          repository;
     private final AttributeDistributionService distribution;
     private final HazelcastNodeId              nodeId;
 
     public AttributePushController(AttributeRepository repository,
             ObjectProvider<AttributeDistributionService> distribution,
-            HazelcastNodeId nodeId
-    // ObjectMapper mapper
-    ) {
+            HazelcastNodeId nodeId) {
         this.repository   = repository;
         this.distribution = distribution.getIfAvailable();
         this.nodeId       = nodeId;
-        // this.mapper = mapper;
     }
 
-    // Request muss dem DTO aus PushRequest entsprechen
     @SuppressWarnings("unused")
     @PostMapping
     public Mono<String> publish(@RequestBody PushRequest request) {
-        // Either empty or set
         Value  entity = request.getEntity() == null ? null : Value.of(request.getEntity());
         String name   = request.getAttributeName();
         Value  value  = convertValue(request.getAttributeValue());
@@ -67,13 +61,11 @@ public class AttributePushController {
                 : request.getArguments().stream().map(this::convertValue).filter(Objects::nonNull).toList();
 
         Duration ttl = request.getTtl() == null ? Duration.ofHours(1) : Duration.ofSeconds(request.getTtl());
-        // Duration ttl = toDuration(request.getTtl());
 
         TimeOutStrategy strategy = request.getStrategy() == null ? TimeOutStrategy.REMOVE
                 : TimeOutStrategy.valueOf(request.getStrategy());
 
-        String message = "Publishing to repository " + repository.hashCode();
-        log.debug(message);
+        log.debug("Publishing to repository {}", repository.hashCode());
 
         return repository.publishAttribute(entity, name, arguments, value, ttl, strategy).doOnSuccess(v -> {
             if (distribution != null) {
@@ -94,7 +86,7 @@ public class AttributePushController {
     @DeleteMapping("/entity/{entity}/{attribute}")
     public Mono<String> deleteAttribute(@PathVariable String entity, @PathVariable String attribute) {
         return repository.removeAttribute(convertValue(entity), attribute)
-                .thenReturn("Attribute remove from repository");
+                .thenReturn("Attribute removed from repository");
     }
 
     @SuppressWarnings("unused")
@@ -102,14 +94,6 @@ public class AttributePushController {
     public Mono<String> deleteAttribute(@PathVariable String attribute) {
         return repository.removeAttribute(attribute).thenReturn("Attribute removed from repository");
     }
-
-    /*
-     * @GetMapping("/entity/{entity}")
-     * public Flux<PersistedAttribute> findAttributeByEntity(@PathVariable String
-     * entity) {
-     * return repository.getAttributeForEntity(Value.of(entity));
-     * }
-     */
 
     @SuppressWarnings("unused")
     @GetMapping("/entity/{entity}")
@@ -129,29 +113,6 @@ public class AttributePushController {
                         "timeoutDeadline", entry.getValue().timeoutDeadline())));
     }
 
-    /*
-     * @GetMapping
-     * public Flux<AttributeResponse> findAllAttributes() {
-     * return repository.getAllAttributes()
-     * .map(entry -> new AttributeResponse(
-     * new AttributeResponse.Key(
-     * entry.getKey().entity() == null ? null
-     * : mapper.convertValue(entry.getKey().entity(), Object.class),
-     *
-     * entry.getKey().attributeName(),
-     *
-     * entry.getKey().arguments().stream().map(arg -> mapper.convertValue(arg,
-     * Object.class))
-     * .toList()),
-     * new AttributeResponse.Value(mapper.convertValue(entry.getValue().value(),
-     * Object.class),
-     * entry.getValue().timestamp(), entry.getValue().ttl().getSeconds(),
-     * entry.getValue().timeoutStrategy().name(),
-     * entry.getValue().timeoutDeadline())));
-     * }
-     */
-
-    // Internal helper method the right Value object
     private Value convertValue(Object input) {
         switch (input) {
         case null      -> {

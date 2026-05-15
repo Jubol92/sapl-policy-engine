@@ -46,7 +46,6 @@ import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
 
 import io.sapl.pdp.configuration.AttributeConfiguration;
-import io.sapl.attributes.push.AttributePushController;
 import org.springframework.context.annotation.Import;
 
 @EnableCaching
@@ -65,7 +64,7 @@ import org.springframework.context.annotation.Import;
                 "org.springframework.boot.autoconfigure.data.mongo.MongoReactiveDataAutoConfiguration" })
 @ComponentScan({ "io.sapl.node", "io.sapl.server", "io.sapl.hazelcast" })
 @EnableConfigurationProperties(SaplNodeProperties.class)
-@Import({ AttributeConfiguration.class, AttributePushController.class, HazelcastConfiguration.class })
+@Import({ AttributeConfiguration.class, HazelcastConfiguration.class })
 public class SaplNodeApplication {
 
     private static final String SERVER_COMMAND = "server";

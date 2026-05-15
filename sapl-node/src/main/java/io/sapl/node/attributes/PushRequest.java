@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributes.push;
+package io.sapl.node.attributes;
 
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -26,10 +26,10 @@ import java.util.List;
 @Setter
 @NoArgsConstructor
 public class PushRequest {
-    private String       entity;             // optional
-    private String       attributeName;      // required
-    private String       attributeValue;     // required
-    private List<Object> arguments;          // optional
-    private Long         ttl;                // To-Do: Entscheidung, ob Duration oder Long, optional, default 3600
-    private String       strategy;           // To-Do: Muss es das enum sein?, optional, default REMOVE
+    private String       entity;         // optional
+    private String       attributeName;  // required
+    private String       attributeValue; // required
+    private List<Object> arguments;      // optional
+    private Long         ttl;            // optional, default 3600
+    private String       strategy;       // optional, default REMOVE
 }
