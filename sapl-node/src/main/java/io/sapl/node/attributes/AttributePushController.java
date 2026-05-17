@@ -17,97 +17,87 @@
  */
 package io.sapl.node.attributes;
 
-import io.sapl.api.attributes.AttributeRepository;
-import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
-import io.sapl.api.model.Value;
+import io.sapl.api.attributes.PersistedAttribute;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.time.Duration;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 
+@SuppressWarnings("unused")
 @Slf4j
 @RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/attributes")
 public class AttributePushController {
-    private final AttributeRepository repository;
+    private final AttributeService service;
 
-    @PostMapping
-    public Mono<String> publish(@RequestBody PushRequest request) {
-        Value  entity = request.getEntity() == null ? null : Value.of(request.getEntity());
-        String name   = request.getAttributeName();
-        Value  value  = convertValue(request.getAttributeValue());
+    @SuppressWarnings("unused")
+    @PostMapping("/{entity}/{name}")
+    public Mono<String> publish(@PathVariable String entity, @PathVariable String name,
+            @RequestHeader(value = "ttl", defaultValue = Long.MAX_VALUE + "") long ttl,
+            @RequestHeader(value = "strategy", defaultValue = "REMOVE") String strategy,
+            @RequestBody PushRequest request) {
 
-        List<Value> arguments = request.getArguments() == null ? List.of()
-                : request.getArguments().stream().map(this::convertValue).filter(Objects::nonNull).toList();
-
-        Duration ttl = request.getTtl() == null ? Duration.ofHours(1) : Duration.ofSeconds(request.getTtl());
-
-        TimeOutStrategy strategy = request.getStrategy() == null ? TimeOutStrategy.REMOVE
-                : TimeOutStrategy.valueOf(request.getStrategy());
-
-        log.debug("Publishing to repository {}", repository.hashCode());
-
-        return repository.publishAttribute(entity, name, arguments, value, ttl, strategy)
-                .thenReturn("Attribute published to repository");
+        return service.publish(entity, name, ttl, strategy, request);
     }
 
-    @DeleteMapping("/entity/{entity}/{attribute}")
-    public Mono<String> deleteAttribute(@PathVariable String entity, @PathVariable String attribute) {
-        return repository.removeAttribute(convertValue(entity), attribute)
-                .thenReturn("Attribute removed from repository");
+    @SuppressWarnings("unused")
+    @PostMapping("/{name}")
+    public Mono<String> publishGlobalAttribute(@PathVariable String name,
+            @RequestHeader(value = "ttl", defaultValue = Long.MAX_VALUE + "") long ttl,
+            @RequestHeader(value = "strategy", defaultValue = "REMOVE") String strategy,
+            @RequestBody PushRequest request) {
+        return service.publish(null, name, ttl, strategy, request);
     }
 
-    @DeleteMapping("/attribute/{attribute}")
-    public Mono<String> deleteAttribute(@PathVariable String attribute) {
-        return repository.removeAttribute(attribute).thenReturn("Attribute removed from repository");
+    // RFC 7231, Section 4.3.5: A payload within a DELETE request message has no
+    // defined semantics;
+    // sending a payload body on a DELETE request might cause some existing
+    // implementations to reject the request
+    // Some clients may ignore in Delete-Request the body, so it's an URL parameter
+    @SuppressWarnings("unused")
+    @DeleteMapping("/{entity}/{name}")
+    public Mono<Void> deleteAttribute(@PathVariable String entity, @PathVariable String name,
+            @RequestParam(value = "arg", required = false) List<String> args) {
+
+        return service.delete(entity, name, args);
     }
 
+    // RFC 7231, Section 4.3.5: A payload within a DELETE request message has no
+    // defined semantics;
+    // sending a payload body on a DELETE request might cause some existing
+    // implementations to reject the request
+    // Some clients may ignore in Delete-Request the body, so it's an URL parameter1
+    @SuppressWarnings("unused")
+    @DeleteMapping("/{name}")
+    public Mono<Void> deleteGlobalAttribute(@PathVariable String name,
+            @RequestParam(value = "arg", required = false) List<String> args) {
+
+        return service.delete(null, name, args);
+    }
+
+    @SuppressWarnings("unused")
+    @GetMapping("/{entity}/{name}")
+    public Mono<PersistedAttribute> getAttribute(@PathVariable String entity, @PathVariable String name,
+            @RequestParam(value = "arg", required = false) List<String> args) {
+        return service.get(entity, name, args);
+    }
+
+    @SuppressWarnings("unused")
+    @GetMapping("/{name}")
+    public Mono<PersistedAttribute> getGlobalAttribute(@PathVariable String name,
+            @RequestParam(value = "arg", required = false) List<String> args) {
+        return service.get(null, name, args);
+    }
+
+    // Spring prefers literal path segments over variables, so /entity/{entity}
+    // takes priority over /{name}
+    @SuppressWarnings("unused")
     @GetMapping("/entity/{entity}")
-    public Flux<Map<String, Object>> findAttributeByEntity(@PathVariable String entity) {
-        return repository.getAttributeForEntity(Value.of(entity))
-                .map(attribute -> Map.of("value", attribute.value(), "timestamp", attribute.timestamp(), "ttl",
-                        attribute.ttl().getSeconds(), "timeoutStrategy", attribute.timeoutStrategy(), "timeoutDeadline",
-                        attribute.timeoutDeadline()));
-    }
-
-    @GetMapping
-    public Flux<Map<String, Object>> findAllAttributes() {
-        return repository.getAllAttributes().map(entry -> Map.of("key", entry.getKey(), "value",
-                Map.of("value", entry.getValue().value(), "timestamp", entry.getValue().timestamp(), "ttl",
-                        entry.getValue().ttl().getSeconds(), "timeoutStrategy", entry.getValue().timeoutStrategy(),
-                        "timeoutDeadline", entry.getValue().timeoutDeadline())));
-    }
-
-    private Value convertValue(Object input) {
-        switch (input) {
-        case null      -> {
-            return Value.NULL;
-        }
-        case Boolean b -> {
-            return Value.of(b);
-        }
-        case Integer i -> {
-            return Value.of(i.longValue());
-        }
-        case Long l    -> {
-            return Value.of(l);
-        }
-        case Double v  -> {
-            return Value.of(v);
-        }
-        case String s  -> {
-            return Value.of(s);
-        }
-        default        -> {
-            return null;
-        }
-        }
+    public Flux<PersistedAttribute> getAllAttributesOfEntity(@PathVariable String entity) {
+        return service.getAll(entity);
     }
 }

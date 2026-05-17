@@ -26,10 +26,6 @@ import java.util.List;
 @Setter
 @NoArgsConstructor
 public class PushRequest {
-    private String       entity;         // optional
-    private String       attributeName;  // required
-    private String       attributeValue; // required
-    private List<Object> arguments;      // optional
-    private Long         ttl;            // optional, default 3600
-    private String       strategy;       // optional, default REMOVE
+    private String       value;         // required
+    private List<Object> arguments;     // optional
 }
