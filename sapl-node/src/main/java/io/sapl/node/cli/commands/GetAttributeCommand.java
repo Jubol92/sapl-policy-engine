@@ -1,6 +1,6 @@
 package io.sapl.node.cli.commands;
 
-import io.sapl.api.attributes.AttributeStorage;
+import io.sapl.attributes.storage.AttributeStorage;
 import picocli.CommandLine;
 import picocli.CommandLine.Mixin;
 import java.io.IOException;
@@ -61,15 +61,14 @@ public class GetAttributeCommand extends BaseAttributeCommand {
     // Klasse geladen, da mehrfache Verwendung in Subcommands
     private Integer getFromStorage(AttributeStorage attributeStorage) {
         try {
-            var args   = parseArguments(arguments);
-            var key    = buildKey(entity, name, args);
-            var result = attributeStorage.get(key).block();
+            var args  = parseArguments(arguments);
+            var key   = buildKey(entity, name, args);
+            var entry = attributeStorage.findAll().get(key);
 
-            // Show the attribute key only if it's explicitly set as an option
             if (!Boolean.TRUE.equals(showKey)) {
-                print(result != null ? result.toString() : "Not found.");
+                print(entry != null ? entry.value().toString() : "Not found.");
             } else {
-                print(result != null ? key + " " + result : "Not found.");
+                print(entry != null ? key + " " + entry.value() : "Not found.");
             }
             return 0;
         } catch (Exception ex) {

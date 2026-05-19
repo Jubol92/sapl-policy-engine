@@ -17,12 +17,9 @@
  */
 package io.sapl.node.attributes;
 
-import io.sapl.api.attributes.PersistedAttribute;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -36,21 +33,17 @@ public class AttributePushController {
 
     @SuppressWarnings("unused")
     @PostMapping("/{entity}/{name}")
-    public Mono<String> publish(@PathVariable String entity, @PathVariable String name,
-            @RequestHeader(value = "ttl", defaultValue = Long.MAX_VALUE + "") long ttl,
-            @RequestHeader(value = "strategy", defaultValue = "REMOVE") String strategy,
-            @RequestBody PushRequest request) {
+    public String publish(@PathVariable String entity, @PathVariable String name,
+            @RequestHeader(value = "ttl", defaultValue = "-1") long ttl, @RequestBody PushRequest request) {
 
-        return service.publish(entity, name, ttl, strategy, request);
+        return service.publish(entity, name, ttl, request);
     }
 
     @SuppressWarnings("unused")
     @PostMapping("/{name}")
-    public Mono<String> publishGlobalAttribute(@PathVariable String name,
-            @RequestHeader(value = "ttl", defaultValue = Long.MAX_VALUE + "") long ttl,
-            @RequestHeader(value = "strategy", defaultValue = "REMOVE") String strategy,
-            @RequestBody PushRequest request) {
-        return service.publish(null, name, ttl, strategy, request);
+    public String publishGlobalAttribute(@PathVariable String name,
+            @RequestHeader(value = "ttl", defaultValue = "-1") long ttl, @RequestBody PushRequest request) {
+        return service.publish(null, name, ttl, request);
     }
 
     // RFC 7231, Section 4.3.5: A payload within a DELETE request message has no
@@ -60,7 +53,7 @@ public class AttributePushController {
     // Some clients may ignore in Delete-Request the body, so it's an URL parameter
     @SuppressWarnings("unused")
     @DeleteMapping("/{entity}/{name}")
-    public Mono<Void> deleteAttribute(@PathVariable String entity, @PathVariable String name,
+    public String deleteAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
 
         return service.delete(entity, name, args);
@@ -73,7 +66,7 @@ public class AttributePushController {
     // Some clients may ignore in Delete-Request the body, so it's an URL parameter1
     @SuppressWarnings("unused")
     @DeleteMapping("/{name}")
-    public Mono<Void> deleteGlobalAttribute(@PathVariable String name,
+    public String deleteGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
 
         return service.delete(null, name, args);
@@ -81,14 +74,14 @@ public class AttributePushController {
 
     @SuppressWarnings("unused")
     @GetMapping("/{entity}/{name}")
-    public Mono<PersistedAttribute> getAttribute(@PathVariable String entity, @PathVariable String name,
+    public String getAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
         return service.get(entity, name, args);
     }
 
     @SuppressWarnings("unused")
     @GetMapping("/{name}")
-    public Mono<PersistedAttribute> getGlobalAttribute(@PathVariable String name,
+    public String getGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
         return service.get(null, name, args);
     }
@@ -97,7 +90,7 @@ public class AttributePushController {
     // takes priority over /{name}
     @SuppressWarnings("unused")
     @GetMapping("/entity/{entity}")
-    public Flux<PersistedAttribute> getAllAttributesOfEntity(@PathVariable String entity) {
+    public String getAllAttributesOfEntity(@PathVariable String entity) {
         return service.getAll(entity);
     }
 }

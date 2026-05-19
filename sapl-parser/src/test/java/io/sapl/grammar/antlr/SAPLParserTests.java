@@ -465,6 +465,10 @@ class SAPLParserTests {
                 set "test" priority permit or abstain errors propagate
                 policy "deny policy" deny
                 policy "permit policy" permit
+                """), arguments("priority suspend algorithm", """
+                set "test" priority suspend or abstain errors propagate
+                policy "suspend policy" suspend
+                policy "permit policy" permit
                 """), arguments("priority permit or deny algorithm", """
                 set "test" priority permit or deny
                 policy "not applicable" permit subject == "non-matching";
@@ -792,11 +796,11 @@ class SAPLParserTests {
         return Stream.of(
                 // From SAPLSyntaxErrorMessageProviderTests
                 arguments("empty document", ""), arguments("incomplete set - missing name", "set "),
-                arguments("incomplete set - missing entitlement", "set \"setname\" "),
+                arguments("incomplete set - missing effect", "set \"setname\" "),
                 arguments("set without policy", "set \"setname\" priority permit or deny"),
                 arguments("incomplete import", "import "), arguments("incomplete policy - missing name", "policy "),
-                arguments("incomplete policy - missing entitlement trimmed", "policy \"test\""),
-                arguments("incomplete policy - missing entitlement with whitespace", "policy \"test\" "),
+                arguments("incomplete policy - missing effect trimmed", "policy \"test\""),
+                arguments("incomplete policy - missing effect with whitespace", "policy \"test\" "),
                 arguments("incomplete variable - missing name trimmed", "policy \"\" deny var"),
                 arguments("incomplete variable - missing name with whitespace", "policy \"\" deny var "),
                 arguments("incomplete variable - missing assignment trimmed", "policy \"\" deny var abc"),

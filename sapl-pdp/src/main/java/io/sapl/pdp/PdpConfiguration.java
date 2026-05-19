@@ -17,9 +17,9 @@
  */
 package io.sapl.pdp;
 
-import io.sapl.api.attributes.AttributeBroker;
-import io.sapl.api.attributes.AttributeBrokerException;
-import io.sapl.api.pdp.PolicyDecisionPoint;
+import io.sapl.api.pdp.StreamingPolicyDecisionPoint;
+import io.sapl.attributes.broker.AttributeBroker;
+import io.sapl.attributes.broker.pip.PipLoadException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,18 +30,16 @@ import java.nio.file.Path;
 public class PdpConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean(PolicyDecisionPoint.class)
-    public PolicyDecisionPointBuilder.PDPComponents pdpComponents(AttributeBroker attributeBroker)
-            throws AttributeBrokerException {
-
+    @ConditionalOnMissingBean(StreamingPolicyDecisionPoint.class)
+    public PDPComponents pdpComponents(AttributeBroker attributeBroker) throws PipLoadException {
         return PolicyDecisionPointBuilder.withDefaults()
                 .withDirectorySource(Path.of(System.getProperty("user.home"), ".sapl", "policies"))
                 .withAttributeBroker(attributeBroker).build();
     }
 
     @Bean
-    @ConditionalOnMissingBean(PolicyDecisionPoint.class)
-    public PolicyDecisionPoint pdp(PolicyDecisionPointBuilder.PDPComponents components) {
+    @ConditionalOnMissingBean(StreamingPolicyDecisionPoint.class)
+    public BlockingPolicyDecisionPoint pdp(PDPComponents components) {
         return components.pdp();
     }
 }

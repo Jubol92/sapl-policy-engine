@@ -22,7 +22,7 @@ import lombok.val;
 import org.aopalliance.intercept.MethodInvocation;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.core.MethodClassKey;
-import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.expression.Expression;
 import org.springframework.security.access.expression.method.DefaultMethodSecurityExpressionHandler;
 import org.springframework.security.access.expression.method.MethodSecurityExpressionHandler;
@@ -42,8 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class SaplAttributeRegistry {
 
-    public static final List<Class<? extends Annotation>> SAPL_ANNOTATIONS = List.of(EnforceRecoverableIfDenied.class,
-            EnforceTillDenied.class, EnforceDropWhileDenied.class, PreEnforce.class, PostEnforce.class);
+    public static final List<Class<? extends Annotation>> SAPL_ANNOTATIONS = List.of(StreamEnforce.class,
+            PreEnforce.class, PostEnforce.class);
 
     private final Map<Class<?>, Map<MethodClassKey, SaplAttribute>> cachedAttributes = new ConcurrentHashMap<>();
 
@@ -148,24 +148,22 @@ public final class SaplAttributeRegistry {
             Class<T> annotationType) {
         val annotation = findAnnotation(method, targetClass, annotationType);
         return switch (annotation) {
-        case PreEnforce a                 -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(),
-                a.environment(), a.secrets(), a.genericsType());
-        case PostEnforce a                -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(),
-                a.environment(), a.secrets(), a.genericsType());
-        case EnforceRecoverableIfDenied a -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(),
-                a.environment(), a.secrets(), a.genericsType());
-        case EnforceTillDenied a          -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(),
-                a.environment(), a.secrets(), a.genericsType());
-        case EnforceDropWhileDenied a     -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(),
-                a.environment(), a.secrets(), a.genericsType());
-        case null, default                -> SaplAttribute.NULL_ATTRIBUTE;
+        case PreEnforce a    -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(), a.environment(),
+                a.secrets(), false, false, false);
+        case PostEnforce a   -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(), a.environment(),
+                a.secrets(), false, false, false);
+        case StreamEnforce a -> buildAttribute(annotationType, a.subject(), a.action(), a.resource(), a.environment(),
+                a.secrets(), a.signalTransitions(), a.terminateOnItemEnforcementFailure(), a.pauseRapDuringSuspend());
+        case null, default   -> SaplAttribute.NULL_ATTRIBUTE;
         };
     }
 
     private SaplAttribute buildAttribute(Class<?> annotationType, String subject, String action, String resource,
-            String environment, String secrets, Class<?> genericsType) {
+            String environment, String secrets, boolean signalTransitions, boolean terminateOnItemEnforcementFailure,
+            boolean pauseRapDuringSuspend) {
         return new SaplAttribute(annotationType, parseExpression(subject), parseExpression(action),
-                parseExpression(resource), parseExpression(environment), parseExpression(secrets), genericsType);
+                parseExpression(resource), parseExpression(environment), parseExpression(secrets), signalTransitions,
+                terminateOnItemEnforcementFailure, pauseRapDuringSuspend);
     }
 
     private <T extends Annotation> boolean hasAnnotation(Method method, Class<?> targetClass, Class<T> annotationType) {
@@ -178,14 +176,15 @@ public final class SaplAttributeRegistry {
     private <A extends Annotation> A findAnnotation(Method method, Class<?> targetClass, Class<A> annotationClass) {
         // The method may be on an interface, but we need attributes from the target
         // class. If the target class is null, the method will be unchanged.
+        // findMergedAnnotation walks meta-annotations and resolves @AliasFor so
+        // future meta-annotation wrappers carry their attributes through to the
+        // resolved annotation instance.
         val specificMethod = ClassUtils.getMostSpecificMethod(method, targetClass);
-        val annotation     = AnnotationUtils.findAnnotation(specificMethod, annotationClass);
+        val annotation     = AnnotatedElementUtils.findMergedAnnotation(specificMethod, annotationClass);
         if (annotation != null) {
             return annotation;
         }
-        // Check the class-level (note declaringClass, not targetClass, which may not
-        // actually implement the method)
-        return AnnotationUtils.findAnnotation(specificMethod.getDeclaringClass(), annotationClass);
+        return AnnotatedElementUtils.findMergedAnnotation(specificMethod.getDeclaringClass(), annotationClass);
     }
 
     private Expression parseExpression(String source) {

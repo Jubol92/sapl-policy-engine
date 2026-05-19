@@ -23,26 +23,27 @@ import com.mongodb.reactivestreams.client.MongoClients;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
-import io.sapl.api.attributes.AttributeBroker;
-import io.sapl.api.attributes.AttributeRepository;
-import io.sapl.api.attributes.AttributeStorage;
-import io.sapl.attributes.*;
+import io.sapl.attributes.broker.AttributeBroker;
+import io.sapl.attributes.broker.repository.InMemoryAttributeRepository;
 import io.sapl.attributes.libraries.UserPolicyInformationPoint;
+import io.sapl.attributes.storage.AttributeStorage;
 import io.sapl.attributes.storage.HeapAttributeStorage;
 import io.sapl.attributes.storage.MongoAttributeStorage;
 import io.sapl.attributes.storage.PostgresAttributeStorage;
+import io.sapl.pdp.PolicyDecisionPointBuilder;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
+import tools.jackson.databind.json.JsonMapper;
+
 import java.time.Clock;
+import java.util.List;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.*;
 
-// Used to create one instance of AttributeStorage, AttributeRepository and the AttributeBroker
 @Configuration
 public class AttributeConfiguration {
 
@@ -65,17 +66,14 @@ public class AttributeConfiguration {
     }
 
     @Bean
-    public AttributeRepository attributeRepository(AttributeStorage storage) {
-        return new InMemoryAttributeRepository(Clock.systemUTC(), storage);
+    public InMemoryAttributeRepository attributeRepository() {
+        return new InMemoryAttributeRepository();
     }
 
     @Bean
-    public AttributeBroker attributeBroker(AttributeRepository repository) {
-        var broker = new CachingAttributeBroker(repository);
-
-        broker.loadPolicyInformationPointLibrary(new UserPolicyInformationPoint());
-
-        return broker;
+    public AttributeBroker attributeBroker(InMemoryAttributeRepository repository) {
+        return PolicyDecisionPointBuilder.buildPolicyInformationPointAttributeBroker(Clock.systemUTC(),
+                JsonMapper.builder().build(), true, List.of(new UserPolicyInformationPoint()), repository);
     }
 
     @Bean
@@ -96,9 +94,7 @@ public class AttributeConfiguration {
     public ObjectMapper objectMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.findAndRegisterModules();
-
         mapper.activateDefaultTyping(mapper.getPolymorphicTypeValidator(), ObjectMapper.DefaultTyping.NON_FINAL);
-
         return mapper;
     }
 

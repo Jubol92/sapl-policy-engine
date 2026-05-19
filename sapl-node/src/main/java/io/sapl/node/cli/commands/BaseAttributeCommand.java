@@ -1,6 +1,6 @@
 package io.sapl.node.cli.commands;
 
-import io.sapl.api.attributes.AttributeKey;
+import io.sapl.attributes.broker.repository.RepositoryKey;
 import io.sapl.api.model.Value;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -21,7 +21,7 @@ public abstract class BaseAttributeCommand implements Callable<Integer> {
             new ReactorClientHttpConnector(reactor.netty.http.client.HttpClient.create().protocol(HttpProtocol.H2C)))
             .build();
 
-    // Hint: Storageimplementierung muss in jeder Subklasse vorhanden sein, da
+    // Hint: Storage-Implementierung muss in jeder Subklasse vorhanden sein, da
     // derzeit der einzige wirkliche Weg
     @CommandLine.Mixin
     protected StorageTransportMixin storage;
@@ -52,7 +52,7 @@ public abstract class BaseAttributeCommand implements Callable<Integer> {
         }
     }
 
-    // Hint: parsed die Argument, welche an Picocli in der form arg1,arg2,...,argN
+    // Hint: parsed die Argumente, welche an Picocli in der form arg1,arg2,...,argN
     // übergeben werden
     // als List<Value> damit diese im Storage verwendbar sind
     protected List<Value> parseArguments(List<String> arguments) {
@@ -64,7 +64,7 @@ public abstract class BaseAttributeCommand implements Callable<Integer> {
     // entity + name + args --> Eindeutig
     // zu klären: args können weggelassen werden und es können alle keys die matchen
     // ausgegeben werden?
-    protected AttributeKey buildKey(String entity, String name, List<Value> args) {
-        return new AttributeKey(Value.of(entity), name, args);
+    protected RepositoryKey buildKey(String entity, String name, List<Value> args) {
+        return new RepositoryKey(Value.of(entity), name, args);
     }
 }

@@ -9,7 +9,8 @@ import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import java.nio.CharBuffer;
 import java.util.Arrays;
-import io.sapl.api.attributes.AttributeStorage;
+
+import io.sapl.attributes.storage.AttributeStorage;
 import io.sapl.attributes.storage.MongoAttributeStorage;
 import io.sapl.attributes.storage.PostgresAttributeStorage;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
@@ -37,7 +38,7 @@ public class StorageTransportMixin {
         mapper.activateDefaultTyping(mapper.getPolymorphicTypeValidator(), ObjectMapper.DefaultTyping.NON_FINAL);
     }
 
-    // Hint: multiplicity = 1 --> Entweder oder d.h. entweder --url oder --provider
+    // Hint: multiplicity = 1 → Entweder oder d.h. entweder --url oder --provider
     @CommandLine.ArgGroup(multiplicity = "1")
     Transport transport;
 
@@ -100,7 +101,7 @@ public class StorageTransportMixin {
         }
         // BindMarkersFactory explizit setzen — DatabaseClient.create() würde
         // SpringFactoriesLoader
-        // nutzen, was spring.factories aus allen JARs lädt und im Native Image zu
+        // nutzen, was spring.factories aus allen JARs lädt und im native Image zu
         // Cascade-Fehlern führt.
         return new PostgresAttributeStorage(
                 DatabaseClient.builder().connectionFactory(ConnectionFactories.get(optionsBuilder.build()))

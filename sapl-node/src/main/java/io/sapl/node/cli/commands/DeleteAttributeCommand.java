@@ -1,6 +1,6 @@
 package io.sapl.node.cli.commands;
 
-import io.sapl.api.attributes.AttributeStorage;
+import io.sapl.attributes.storage.AttributeStorage;
 import picocli.CommandLine;
 import java.util.List;
 
@@ -54,7 +54,7 @@ public class DeleteAttributeCommand extends BaseAttributeCommand {
             var args = parseArguments(arguments);
             var key  = buildKey(entity, name, args);
 
-            attributeStorage.remove(key).block();
+            attributeStorage.remove(key);
             return 0;
         } catch (Exception ex) {
             spec.commandLine().getErr().println("Failed to delete attribute: " + ex.getMessage());

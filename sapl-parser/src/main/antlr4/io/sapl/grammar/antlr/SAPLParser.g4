@@ -52,6 +52,7 @@ votingMode
     : FIRST            # first
     | PRIORITY DENY    # priorityDeny
     | PRIORITY PERMIT  # priorityPermit
+    | PRIORITY SUSPEND # prioritySuspend
     | UNANIMOUS STRICT # unanimousStrict
     | UNANIMOUS        # unanimous
     | UNIQUE           # unique
@@ -69,16 +70,17 @@ errorHandling
     ;
 
 policy
-    : POLICY saplName=STRING entitlement
+    : POLICY saplName=STRING effect
       policyBody?
       (OBLIGATION obligations+=expression)*
       (ADVICE adviceExpressions+=expression)*
       (TRANSFORM transformation=expression)?
     ;
 
-entitlement
-    : PERMIT  # permitEntitlement
-    | DENY    # denyEntitlement
+effect
+    : PERMIT   # permitEffect
+    | DENY     # denyEffect
+    | SUSPEND  # suspendEffect
     ;
 
 policyBody

@@ -17,56 +17,32 @@
  */
 package io.sapl.attributes.storage;
 
-import io.sapl.api.attributes.AttributeKey;
-import io.sapl.api.attributes.AttributeStorage;
-import io.sapl.api.attributes.PersistedAttribute;
-import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
+import io.sapl.attributes.broker.repository.RepositoryKey;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * In-memory storage using ConcurrentHashMap.
- * <p>
- * No actual persistence - all data is lost on restart. Wraps synchronous
- * operations in Mono/Flux for interface
- * compliance.
- * <p>
- * Suitable for testing, development, and deployments where attribute loss on
- * restart is acceptable.
- */
-@Slf4j
 public class HeapAttributeStorage implements AttributeStorage {
 
-    private final ConcurrentHashMap<AttributeKey, PersistedAttribute> storage = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<RepositoryKey, StorageEntry> store = new ConcurrentHashMap<>();
 
-    /** {@inheritDoc} */
     @Override
-    public Mono<PersistedAttribute> get(AttributeKey key) {
-        return Mono.justOrEmpty(storage.get(key));
+    public void put(RepositoryKey key, StorageEntry entry) {
+        store.put(key, entry);
     }
 
-    /** {@inheritDoc} */
     @Override
-    public Mono<Void> put(AttributeKey key, PersistedAttribute value) {
-        String message = "Putting attribute into storage " + this.hashCode();
-        log.debug(message);
-
-        return Mono.fromRunnable(() -> storage.put(key, value));
+    public void remove(RepositoryKey key) {
+        store.remove(key);
     }
 
-    /** {@inheritDoc} */
     @Override
-    public Mono<Void> remove(AttributeKey key) {
-        return Mono.fromRunnable(() -> storage.remove(key));
+    public Map<RepositoryKey, StorageEntry> findAll() {
+        return Map.copyOf(store);
     }
 
-    /** {@inheritDoc} */
     @Override
-    public Flux<Map.Entry<AttributeKey, PersistedAttribute>> findAll() {
-        return Flux.fromIterable(storage.entrySet());
+    public void close() {
+        store.clear();
     }
-
 }

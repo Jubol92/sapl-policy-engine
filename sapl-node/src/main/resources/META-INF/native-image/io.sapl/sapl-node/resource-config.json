@@ -23,7 +23,7 @@
         "pattern": "META-INF/resources/webjars/codemirror/.*"
       },
       {
-        "pattern": "org/springframework/http/codec/CodecConfigurer\\.properties"
+        "pattern": "META-INF/resources/webjars/scalar/.*"
       }
     ]
   }

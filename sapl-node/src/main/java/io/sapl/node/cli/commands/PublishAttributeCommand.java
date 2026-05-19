@@ -1,12 +1,11 @@
 package io.sapl.node.cli.commands;
 
-import io.sapl.api.attributes.AttributeRepository.TimeOutStrategy;
-import io.sapl.api.attributes.AttributeStorage;
-import io.sapl.api.attributes.PersistedAttribute;
 import io.sapl.api.model.Value;
+import io.sapl.attributes.storage.AttributeStorage;
 import org.springframework.http.MediaType;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -26,11 +25,8 @@ public class PublishAttributeCommand extends BaseAttributeCommand {
     @Option(names = "--arguments", description = "Comma-separated list of arguments", defaultValue = "", split = ",")
     List<String> arguments;
 
-    @Option(names = "--ttl", description = "Time to live in seconds. The attribute expires after this duration. If the TTL isn't set or a negative number it will use the fall back of 292 years", defaultValue = "-1")
+    @Option(names = "--ttl", description = "Time to live in seconds. Omit or use -1 for permanent attributes.", defaultValue = "-1")
     Long ttl;
-
-    @Option(names = "--strategy", description = "Timeout strategy after TTL expires: ${COMPLETION-CANDIDATES}", defaultValue = "REMOVE")
-    TimeOutStrategy strategy;
 
     @Override
     public Integer call() {
@@ -43,18 +39,19 @@ public class PublishAttributeCommand extends BaseAttributeCommand {
     private Integer publishViaApi() {
         String json = """
                 {
-                    "entity": "%s",
-                    "attributeName": "%s",
-                    "attributeValue": "%s",
-                    "arguments": [],
-                    "ttl": %s,
-                    "strategy": "%s"
+                    "value": "%s",
+                    "arguments": []
                 }
-                """.formatted(entity, name, value, ttl < 0 ? Long.MAX_VALUE / 1_000_000_000L : ttl, strategy);
+                """.formatted(value);
 
-        var response = webClient.post().uri(storage.transport.url + "/api/attributes")
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(json).retrieve().toEntity(String.class).block();
+        var uri     = storage.transport.url + "/api/attributes/" + entity + "/" + name;
+        var request = webClient.post().uri(uri).contentType(MediaType.APPLICATION_JSON);
 
+        if (ttl >= 0) {
+            request = request.header("ttl", String.valueOf(ttl));
+        }
+
+        var response = request.bodyValue(json).retrieve().toEntity(String.class).block();
         return response != null && response.getStatusCode().value() == 200 ? 0 : 1;
     }
 
@@ -67,17 +64,13 @@ public class PublishAttributeCommand extends BaseAttributeCommand {
         }
     }
 
-    // Hint: Hilfsmethoden buildKey(), parseArguments() werden über die abstrakte
-    // Klasse geladen, da mehrfache Verwendung in Subcommands
     private Integer publishToStorage(AttributeStorage attributeStorage) {
         try {
-            var args      = parseArguments(arguments);
-            var key       = buildKey(entity, name, args);
-            var duration  = ttl < 0 ? Duration.ofNanos(Long.MAX_VALUE) : Duration.ofSeconds(ttl);
-            var persisted = new PersistedAttribute(Value.of(value), Instant.now(), duration, strategy,
-                    Instant.now().plus(duration));
-
-            attributeStorage.put(key, persisted).block();
+            var     args      = parseArguments(arguments);
+            var     key       = buildKey(entity, name, args);
+            Instant expiresAt = ttl < 0 ? null : Instant.now().plus(Duration.ofSeconds(ttl));
+            var     entry     = new AttributeStorage.StorageEntry(Value.of(value), expiresAt);
+            attributeStorage.put(key, entry);
             return 0;
         } catch (Exception e) {
             spec.commandLine().getErr().println("Failed to publish attribute: " + e.getMessage());
