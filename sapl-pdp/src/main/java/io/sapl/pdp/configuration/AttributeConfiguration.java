@@ -24,17 +24,17 @@ import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import io.sapl.attributes.broker.AttributeBroker;
+import io.sapl.attributes.broker.AttributeRepository;
 import io.sapl.attributes.broker.repository.InMemoryAttributeRepository;
+import io.sapl.attributes.broker.repository.MongoAttributeRepository;
+import io.sapl.attributes.broker.repository.PostgresAttributeRepository;
 import io.sapl.attributes.libraries.UserPolicyInformationPoint;
-import io.sapl.attributes.storage.AttributeStorage;
-import io.sapl.attributes.storage.HeapAttributeStorage;
-import io.sapl.attributes.storage.MongoAttributeStorage;
-import io.sapl.attributes.storage.PostgresAttributeStorage;
 import io.sapl.pdp.PolicyDecisionPointBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 import tools.jackson.databind.json.JsonMapper;
@@ -49,29 +49,26 @@ public class AttributeConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "heap", matchIfMissing = true)
-    public AttributeStorage heapStorage() {
-        return new HeapAttributeStorage();
-    }
-
-    @Bean
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public AttributeStorage mongoStorage(ReactiveMongoTemplate template, ObjectMapper mapper) {
-        return new MongoAttributeStorage(template, mapper);
-    }
-
-    @Bean
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public AttributeStorage postgresStorage(DatabaseClient client, ObjectMapper mapper) {
-        return new PostgresAttributeStorage(client, mapper);
-    }
-
-    @Bean
-    public InMemoryAttributeRepository attributeRepository() {
+    public AttributeRepository heapAttributeRepository() {
         return new InMemoryAttributeRepository();
     }
 
     @Bean
-    public AttributeBroker attributeBroker(InMemoryAttributeRepository repository) {
+    @Primary
+    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
+    public AttributeRepository postgresAttributeRepository(DatabaseClient client, ObjectMapper mapper) {
+        return new PostgresAttributeRepository(client, mapper);
+    }
+
+    @Bean
+    @Primary
+    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
+    public AttributeRepository mongoAttributeRepository(ReactiveMongoTemplate template, ObjectMapper mapper) {
+        return new MongoAttributeRepository(template, mapper);
+    }
+
+    @Bean
+    public AttributeBroker attributeBroker(AttributeRepository repository) {
         return PolicyDecisionPointBuilder.buildPolicyInformationPointAttributeBroker(Clock.systemUTC(),
                 JsonMapper.builder().build(), true, List.of(new UserPolicyInformationPoint()), repository);
     }

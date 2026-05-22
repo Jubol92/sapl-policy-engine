@@ -110,7 +110,7 @@ server:
 
 io.sapl:
   node:
-    allow-no-auth: false
+    allow-no-auth: true
     allow-basic-auth: false
     allow-api-key-auth: false
     allow-oauth2-auth: false
@@ -169,8 +169,8 @@ io.sapl:
   pdp.embedded:
     enabled: true
     pdp-config-type: DIRECTORY
-    config-path: /policies
-    policies-path: /policies
+    config-path: /home/jubol92/.sapl/policies
+    policies-path: /home/jubol92/.sapl/policies
     metrics-enabled: true
 
   attributes:

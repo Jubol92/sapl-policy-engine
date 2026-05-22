@@ -25,7 +25,6 @@ import org.bson.Document;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
-
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Map;

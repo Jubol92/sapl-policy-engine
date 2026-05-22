@@ -19,7 +19,8 @@ package io.sapl.attributes.libraries;
 
 import io.sapl.api.attributes.Attribute;
 import io.sapl.api.model.Value;
-import reactor.core.publisher.Flux;
+import io.sapl.api.stream.Stream;
+import io.sapl.api.stream.Streams;
 import io.sapl.api.attributes.PolicyInformationPoint;
 import lombok.extern.slf4j.Slf4j;
 
@@ -29,27 +30,27 @@ public class UserPolicyInformationPoint {
     private String message = "";
 
     @Attribute(name = "age")
-    public Flux<Value> age(Value subject, Value... args) {
+    public Stream<Value> age(Value subject, Value... args) {
         message = "PIP: Attribute age called for " + subject;
         log.info(message);
-        return Flux.empty();
+        return Streams.empty();
     }
 
     @Attribute(name = "department")
-    public Flux<Value> department(Value subject, Value... args) {
+    public Stream<Value> department(Value subject, Value... args) {
         message = "PIP: Attribute department called for " + subject + " with values";
         log.info(message);
-        return Flux.empty();
+        return Streams.empty();
     }
 
     @Attribute(name = "role")
-    public Flux<Value> role(Value subject, Value arg) {
+    public Stream<Value> role(Value subject, Value arg) {
         log.info("PIP role called with arg: {}", arg);
-        return Flux.empty();
+        return Streams.empty();
     }
 
     @Attribute(name = "plan")
-    public Flux<Value> plan(Value subject, Value arg1, Value arg2) {
-        return Flux.empty();
+    public Stream<Value> plan(Value subject, Value arg1, Value arg2) {
+        return Streams.empty();
     }
 }
