@@ -71,12 +71,20 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
 
     private boolean closed = false;
 
+    // Needed for delegate pattern
+    private final Consumer<RepositoryKey> onExpiry;
+
     public InMemoryAttributeRepository() {
+        this(key -> {});
+    }
+
+    public InMemoryAttributeRepository(Consumer<RepositoryKey> onExpiry) {
+        this.onExpiry  = onExpiry; // new
         this.scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            val thread = Thread.ofVirtual().unstarted(runnable);
-            thread.setName("InMemoryAttributeRepository-ttl");
-            return thread;
-        });
+                           val thread = Thread.ofVirtual().unstarted(runnable);
+                           thread.setName("InMemoryAttributeRepository-ttl");
+                           return thread;
+                       });
     }
 
     @Override
@@ -218,6 +226,7 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
             lock.unlock();
 
         }
+        onExpiry.accept(key); // new
         fireObservers(toFire, Value.UNDEFINED);
     }
 
