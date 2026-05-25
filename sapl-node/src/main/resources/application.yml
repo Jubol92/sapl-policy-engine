@@ -22,6 +22,10 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.webmvc.autoconfigure.WebMvcObservationAutoConfiguration
+      - org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration
+      - org.springframework.boot.autoconfigure.mongo.MongoReactiveAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.mongo.MongoReactiveDataAutoConfiguration
   threads:
     virtual:
       enabled: true
@@ -290,6 +294,9 @@ bucket4j:
 # --- Actuator Endpoints ---
 
 management:
+  health:
+    mongo:
+      enabled: false
   endpoint:
     health:
       show-details: when-authorized

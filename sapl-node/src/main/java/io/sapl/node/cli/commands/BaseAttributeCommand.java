@@ -18,7 +18,7 @@ public abstract class BaseAttributeCommand implements Callable<Integer> {
     protected CommandSpec spec;
 
     protected static final WebClient webClient = WebClient.builder().clientConnector(
-            new ReactorClientHttpConnector(reactor.netty.http.client.HttpClient.create().protocol(HttpProtocol.H2C)))
+            new ReactorClientHttpConnector(reactor.netty.http.client.HttpClient.create().protocol(HttpProtocol.HTTP11)))
             .build();
 
     // Hint: Storage-Implementierung muss in jeder Subklasse vorhanden sein, da

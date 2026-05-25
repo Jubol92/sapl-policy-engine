@@ -17,358 +17,142 @@
  */
 package io.sapl.attributes.broker.repository;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.sapl.api.attributes.AttributeFinderInvocation;
 import io.sapl.api.model.Value;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import lombok.val;
+import lombok.experimental.Delegate;
 import org.jspecify.annotations.Nullable;
 import org.springframework.r2dbc.core.DatabaseClient;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Consumer;
+import java.time.OffsetDateTime;
+import java.util.List;
 
-@Slf4j
+@SuppressWarnings("unused")
 public class PostgresAttributeRepository implements AttributeRepository {
-    private static final String ERROR_CLOSED           = "Repository is closed.";
-    private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
-    private static final String WARN_OBSERVER_THREW    = "Observer {} threw: {}.";
+    private static final String ERROR_WHILE_SERIALIZING = "Failed to serialize attribute";
 
-    private final ScheduledExecutorService scheduler;
+    // Delegate Pattern . observer(), close() etc are generated
+    @Delegate(excludes = PostgresAttributeRepository.ExcludedMethods.class)
+    private final InMemoryAttributeRepository internalRepository;
 
     private final DatabaseClient client;
     private final ObjectMapper   mapper;
 
-    private final ReentrantLock                                                    lock           = new ReentrantLock(
-            true);
-    private final Map<RepositoryKey, PostgresAttributeRepository.Entry>            entries        = new HashMap<>();
-    private final Map<RepositoryKey, Set<PostgresAttributeRepository.KeyObserver>> observersByKey = new HashMap<>();
-
-    private boolean closed = false;
-
-    @Override
-    public void close() {
-        Collection<PostgresAttributeRepository.Entry> toCancel;
-        lock.lock();
-
-        try {
-            if (closed) {
-                return;
-            }
-            closed   = true;
-            toCancel = new ArrayList<>(entries.values());
-            // Mark every observer closed so in-flight fires (already past the
-            // observers gate, about to call deliver) become no-ops.
-            for (val bucket : observersByKey.values()) {
-                for (val observer : bucket) {
-                    observer.closed = true;
-                }
-            }
-            entries.clear();
-            observersByKey.clear();
-        } finally {
-
-            lock.unlock();
-
-        }
-        for (val e : toCancel) {
-            if (e.expiryTask != null) {
-                e.expiryTask.cancel(false);
-            }
-        }
-        scheduler.shutdownNow();
+    public PostgresAttributeRepository(DatabaseClient client, ObjectMapper mapper) {
+        this.client             = client;
+        this.mapper             = mapper;
+        this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
+        loadFromDB();
     }
 
-    public PostgresAttributeRepository(DatabaseClient client, ObjectMapper mapper) {
-        this.client = client;
-        this.mapper = mapper;
+    private interface ExcludedMethods {
+        void publish(RepositoryKey key, Value value);
 
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            val thread = Thread.ofVirtual().unstarted(runnable);
-            thread.setName("PostgresAttributeRepository-ttl");
-            return thread;
-        });
+        void publish(RepositoryKey key, Value value, Duration ttl);
 
-        startUp();
+        void remove(RepositoryKey key);
     }
 
     @Override
     public void publish(@NonNull RepositoryKey key, @NonNull Value value) {
-
-        publishInternal(key, value, null);
+        internalRepository.publish(key, value);
+        upsertToDB(key, value, null);
     }
 
     @Override
     public void publish(@NonNull RepositoryKey key, @NonNull Value value, @NonNull Duration ttl) {
-        if (ttl.isZero() || ttl.isNegative()) {
-            throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
-        }
-        publishInternal(key, value, ttl);
-    }
-
-    private void publishInternal(RepositoryKey key, Value value, @Nullable Duration ttl) {
-        List<PostgresAttributeRepository.KeyObserver> toFire;
-        lock.lock();
-
-        try {
-            if (closed) {
-                return;
-            }
-
-            val prior = entries.get(key);
-
-            if (prior != null && prior.expiryTask != null) {
-                prior.expiryTask.cancel(false);
-            }
-
-            val entry = new PostgresAttributeRepository.Entry(value);
-            entries.put(key, entry);
-
-            // Persist to storage
-            var expiresAt = ttl != null ? Instant.now().plus(ttl) : null;
-            persistEntry(key, value, expiresAt);
-
-            if (ttl != null) {
-                entry.expiryTask = scheduler.schedule(() -> expireKey(key, entry), ttl.toMillis(),
-                        TimeUnit.MILLISECONDS);
-            }
-            toFire = observers(key);
-        } finally {
-            lock.unlock();
-        }
-        fireObservers(toFire, value);
-    }
-
-    private record dbrow(String key, String value, java.time.OffsetDateTime expiresAt) {}
-
-    public void startUp() {
-        cleanup();
-        var rows = client.sql("SELECT key, value, expires_at FROM attributes")
-                .map(row -> new dbrow(row.get("key", String.class), row.get("value", String.class),
-                        row.get("expires_at", java.time.OffsetDateTime.class)))
-                .all().collectList().blockOptional().orElse(List.of());
-
-        for (var row : rows) {
-            try {
-                var key       = deserializeKey(row.key());
-                var value     = mapper.readValue(row.value(), Value.class);
-                var expiresAt = row.expiresAt() != null ? row.expiresAt().toInstant() : null;
-
-                var entry = new Entry(value);
-                entries.put(key, entry);
-
-                if (expiresAt != null) {
-                    var restTtl = Duration.between(Instant.now(), expiresAt);
-                    entry.expiryTask = scheduler.schedule(() -> expireKey(key, entry), restTtl.toMillis(),
-                            TimeUnit.MILLISECONDS);
-                }
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }
-    }
-
-    // Simple clean-up to delete all expired keys. Important for the start-up of the
-    // node
-    public void cleanup() {
-        client.sql("DELETE FROM attributes WHERE expires_at < NOW()").then().block();
-    }
-
-    private void expireKey(RepositoryKey key, PostgresAttributeRepository.Entry expectedEntry) {
-        List<PostgresAttributeRepository.KeyObserver> toFire;
-        lock.lock();
-
-        try {
-            val current = entries.get(key);
-            if (current != expectedEntry) {
-                return;
-            }
-            entries.remove(key);
-            toFire = observers(key);
-        } finally {
-            lock.unlock();
-        }
-
-        // DELETE the key from the postgres backend as well.
-        client.sql("DELETE FROM attributes WHERE key = :key").bind("key", serializeKey(key)).then().block();
-        fireObservers(toFire, Value.UNDEFINED);
+        internalRepository.publish(key, value, ttl);
+        upsertToDB(key, value, Instant.now().plus(ttl));
     }
 
     @Override
     public void remove(@NonNull RepositoryKey key) {
-        List<PostgresAttributeRepository.KeyObserver> toFire;
-        lock.lock();
+        internalRepository.remove(key);
+        deleteFromDB(key);
+    }
+
+    private record DBEntry(String name, String entity, String arguments, String value, OffsetDateTime expiresAt) {}
+
+    public void loadFromDB() {
+        var rows = client.sql("SELECT name, entity, arguments, value, expires_at FROM attributes")
+                .map(row -> new DBEntry(row.get("name", String.class), row.get("entity", String.class),
+                        row.get("arguments", String.class), row.get("value", String.class),
+                        row.get("expires_at", OffsetDateTime.class)))
+                .all().collectList().block();
+
+        if (rows == null)
+            return;
 
         try {
-            if (closed) {
-                return;
-            }
-            val prior = entries.remove(key);
-            client.sql("DELETE FROM attributes WHERE key = :key").bind("key", serializeKey(key)).then().block();
-            if (prior == null) {
-                return;
-            }
-            if (prior.expiryTask != null) {
-                prior.expiryTask.cancel(false);
-            }
-            toFire = observers(key);
-        } finally {
+            for (var row : rows) {
+                var key       = new RepositoryKey(
+                        row.entity() != null ? mapper.readValue(row.entity(), Value.class) : null, row.name(),
+                        row.arguments() != null ? mapper.readValue(row.arguments(), new TypeReference<>() {})
+                                : List.of());
+                var value     = mapper.readValue(row.value(), Value.class);
+                var expiresAt = row.expiresAt() != null ? row.expiresAt().toInstant() : null;
 
-            lock.unlock();
-
-        }
-        fireObservers(toFire, Value.UNDEFINED);
-    }
-
-    @Override
-    public Registration observe(@NonNull AttributeFinderInvocation invocation, @NonNull Consumer<Value> onValue) {
-        val   repoKey  = RepositoryKey.fromInvocation(invocation);
-        val   observer = new PostgresAttributeRepository.KeyObserver(repoKey, onValue);
-        Value initial;
-        lock.lock();
-
-        try {
-            if (closed) {
-                initial = Value.error(ERROR_CLOSED);
-            } else {
-                observersByKey.computeIfAbsent(repoKey, k -> new HashSet<>()).add(observer);
-                val entry = entries.get(repoKey);
-                initial = entry != null ? entry.value : Value.UNDEFINED;
-            }
-        } finally {
-
-            lock.unlock();
-
-        }
-        observer.deliver(initial);
-        return observer;
-    }
-
-    /** Caller holds the lock. */
-    private List<PostgresAttributeRepository.KeyObserver> observers(RepositoryKey repositoryKey) {
-        val bucket = observersByKey.get(repositoryKey);
-        return bucket == null ? List.of() : new ArrayList<>(bucket);
-    }
-
-    private void fireObservers(List<PostgresAttributeRepository.KeyObserver> observers, Value value) {
-        for (val observer : observers) {
-            observer.deliver(value);
-        }
-    }
-
-    // Writes back the attribute into the Postgres backend
-    private void persistEntry(RepositoryKey key, Value value, @Nullable Instant expiresAt) {
-        try {
-            var serializedValue = mapper.writeValueAsString(value);
-
-            // Upsert (update or insert)
-            var spec = client.sql("""
-                    INSERT INTO attributes(key, value, expires_at)
-                    VALUES (:key, CAST(:value AS jsonb), :expires_at)
-                    ON CONFLICT (key) DO UPDATE SET value = CAST(:value AS jsonb), expires_at = :expires_at
-                    """).bind("key", serializeKey(key)).bind("value", serializedValue);
-
-            // expires_key is allowed to be null
-            if (expiresAt != null)
-                spec = spec.bind("expires_at", expiresAt.atOffset(java.time.ZoneOffset.UTC));
-            else
-                spec = spec.bindNull("expires_at", java.time.OffsetDateTime.class);
-            spec.then().block();
-
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private String serializeKey(RepositoryKey key) {
-        try {
-            var normalized = new RepositoryKey(key.entity(), key.name(), new ArrayList<>(key.arguments()));
-            return mapper.writeValueAsString(normalized);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private RepositoryKey deserializeKey(String json) {
-        try {
-            return mapper.readValue(json, RepositoryKey.class);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    /**
-     * Per-entry storage. {@code expiryTask} is settable so the
-     * publisher can install it after constructing the entry record
-     * that the task closure captures.
-     */
-    private static final class Entry {
-        private final Value        value;
-        @Nullable
-        private ScheduledFuture<?> expiryTask;
-
-        private Entry(Value value) {
-            this.value = value;
-        }
-    }
-
-    /**
-     * Single-key observer registered via {@link #observe}. The
-     * repository indexes observers in {@link #observersByKey} and
-     * fires them on publish, expire and remove.
-     */
-    @RequiredArgsConstructor
-    private final class KeyObserver implements AttributeRepository.Registration {
-
-        private static final AtomicLong NEXT_ID = new AtomicLong(Long.MIN_VALUE);
-
-        private final long            id     = NEXT_ID.getAndIncrement();
-        private final RepositoryKey   repositoryKey;
-        private final Consumer<Value> onValue;
-        private volatile boolean      closed = false;
-
-        void deliver(Value value) {
-            if (closed) {
-                return;
-            }
-            try {
-                onValue.accept(value);
-            } catch (RuntimeException e) {
-                log.warn(WARN_OBSERVER_THREW, id, e.getMessage(), e);
-            }
-        }
-
-        @Override
-        public void close() {
-            lock.lock();
-
-            try {
-                if (closed) {
-                    return;
-                }
-                closed = true;
-                val bucket = observersByKey.get(repositoryKey);
-                if (bucket != null) {
-                    bucket.remove(this);
-                    if (bucket.isEmpty()) {
-                        observersByKey.remove(repositoryKey);
+                if (expiresAt != null) {
+                    var remainingTTL = Duration.between(Instant.now(), expiresAt);
+                    if (!remainingTTL.isNegative()) {
+                        internalRepository.publish(key, value, remainingTTL);
+                    } else {
+                        deleteFromDB(key);
                     }
+                } else {
+                    internalRepository.publish(key, value);
                 }
-            } finally {
-
-                lock.unlock();
-
             }
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(ERROR_WHILE_SERIALIZING, e);
+        }
+    }
+
+    private void upsertToDB(@NonNull RepositoryKey key, Value value, @Nullable Instant expiresAt) {
+        try {
+            var entityJson    = key.entity() != null ? mapper.writeValueAsString(key.entity()) : null;
+            var argumentsJson = mapper.writeValueAsString(key.arguments());
+            var valueJson     = mapper.writeValueAsString(value);
+
+            var deleteSpec = client
+                    .sql("DELETE FROM attributes " + "WHERE name = :name "
+                            + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
+                            + "AND arguments = CAST(:arguments AS jsonb)")
+                    .bind("name", key.name()).bind("arguments", argumentsJson);
+            (entityJson != null ? deleteSpec.bind("entity", entityJson) : deleteSpec.bindNull("entity", String.class))
+                    .then().block();
+
+            var insertSpec = client.sql("INSERT INTO attributes (name, entity, arguments, value, expires_at) "
+                    + "VALUES (:name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt)")
+                    .bind("name", key.name()).bind("arguments", argumentsJson).bind("value", valueJson);
+
+            insertSpec = expiresAt != null ? insertSpec.bind("expiresAt", expiresAt.atOffset(java.time.ZoneOffset.UTC))
+                    : insertSpec.bindNull("expiresAt", OffsetDateTime.class);
+            (entityJson != null ? insertSpec.bind("entity", entityJson) : insertSpec.bindNull("entity", String.class))
+                    .then().block();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(ERROR_WHILE_SERIALIZING, e);
+        }
+    }
+
+    public void deleteFromDB(@NonNull RepositoryKey key) {
+        try {
+            var entityJson    = key.entity() != null ? mapper.writeValueAsString(key.entity()) : null;
+            var argumentsJson = mapper.writeValueAsString(key.arguments());
+
+            var spec = client
+                    .sql("DELETE FROM attributes " + "WHERE name = :name "
+                            + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
+                            + "AND arguments = CAST(:arguments AS jsonb)")
+                    .bind("name", key.name()).bind("arguments", argumentsJson);
+            (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class)).then()
+                    .block();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(ERROR_WHILE_SERIALIZING, e);
         }
     }
 }

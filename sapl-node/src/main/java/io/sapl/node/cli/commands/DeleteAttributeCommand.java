@@ -28,7 +28,7 @@ public class DeleteAttributeCommand extends BaseAttributeCommand {
     // Hint: Args werden in API komplett ignoriert. tbd
     private Integer deleteViaApi() {
         // Hint: sendet einen DELETE-Requests an den Endpoint der Push API
-        var response = webClient.delete().uri(storage.transport.url + "/api/attributes/entity/" + entity + "/" + name)
+        var response = webClient.delete().uri(storage.transport.url + "/api/attributes/" + entity + "/" + name)
                 .retrieve().toEntity(String.class).block();
 
         int status = response != null ? response.getStatusCode().value() : 0;

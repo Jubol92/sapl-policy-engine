@@ -44,6 +44,7 @@ import java.util.List;
 
 import static io.r2dbc.spi.ConnectionFactoryOptions.*;
 
+@SuppressWarnings("unused")
 @Configuration
 public class AttributeConfiguration {
 
