@@ -22,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URI;
 import java.util.List;
 
 @SuppressWarnings("unused")
@@ -34,17 +35,18 @@ public class AttributePushController {
 
     @SuppressWarnings("unused")
     @PostMapping("/{entity}/{name}")
-    public String publish(@PathVariable String entity, @PathVariable String name,
+    public ResponseEntity<Void> publish(@PathVariable String entity, @PathVariable String name,
             @RequestHeader(value = "ttl", defaultValue = "-1") long ttl, @RequestBody PushRequest request) {
-
-        return service.publish(entity, name, ttl, request);
+        service.publish(entity, name, ttl, request);
+        return ResponseEntity.created(URI.create("/api/attributes/" + entity + "/" + name)).build();
     }
 
     @SuppressWarnings("unused")
     @PostMapping("/{name}")
-    public String publishGlobalAttribute(@PathVariable String name,
+    public ResponseEntity<Void> publishGlobalAttribute(@PathVariable String name,
             @RequestHeader(value = "ttl", defaultValue = "-1") long ttl, @RequestBody PushRequest request) {
-        return service.publish(null, name, ttl, request);
+        service.publish(null, name, ttl, request);
+        return ResponseEntity.created(URI.create("/api/attributes/" + name)).build();
     }
 
     // RFC 7231, Section 4.3.5: A payload within a DELETE request message has no
@@ -54,10 +56,10 @@ public class AttributePushController {
     // Some clients may ignore in Delete-Request the body, so it's an URL parameter
     @SuppressWarnings("unused")
     @DeleteMapping("/{entity}/{name}")
-    public String deleteAttribute(@PathVariable String entity, @PathVariable String name,
+    public ResponseEntity<Void> deleteAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-
-        return service.delete(entity, name, args);
+        service.delete(entity, name, args);
+        return ResponseEntity.noContent().build();
     }
 
     // RFC 7231, Section 4.3.5: A payload within a DELETE request message has no
@@ -67,32 +69,33 @@ public class AttributePushController {
     // Some clients may ignore in Delete-Request the body, so it's an URL parameter1
     @SuppressWarnings("unused")
     @DeleteMapping("/{name}")
-    public String deleteGlobalAttribute(@PathVariable String name,
+    public ResponseEntity<Void> deleteGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
 
-        return service.delete(null, name, args);
+        service.delete(null, name, args);
+        return ResponseEntity.noContent().build();
     }
 
     @SuppressWarnings("unused")
     @GetMapping("/{entity}/{name}")
-    public String getAttribute(@PathVariable String entity, @PathVariable String name,
+    public ResponseEntity<String> getAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return service.get(entity, name, args);
+        return ResponseEntity.ok(service.get(entity, name, args));
     }
 
     @SuppressWarnings("unused")
     @GetMapping("/{name}")
-    public String getGlobalAttribute(@PathVariable String name,
+    public ResponseEntity<String> getGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return service.get(null, name, args);
+        return ResponseEntity.ok(service.get(null, name, args));
     }
 
     // Spring prefers literal path segments over variables, so /entity/{entity}
     // takes priority over /{name}
     @SuppressWarnings("unused")
     @GetMapping("/entity/{entity}")
-    public String getAllAttributesOfEntity(@PathVariable String entity) {
-        return service.getAll(entity);
+    public ResponseEntity<String> getAllAttributesOfEntity(@PathVariable String entity) {
+        return ResponseEntity.ok(service.getAll(entity));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

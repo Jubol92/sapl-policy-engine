@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -19,7 +20,7 @@ public class AttributeService {
     private final ConcurrentHashMap<RepositoryKey, Value> snapshot = new ConcurrentHashMap<>();
     private final ObjectMapper                            mapper;     // needed for JsonNode
 
-    public String publish(String entity, String attribute, long ttl, PushRequest body) {
+    public void publish(String entity, String attribute, long ttl, PushRequest body) {
         List<Value> arguments = body.getArguments() == null ? List.of()
                 : body.getArguments().stream().map(this::fromJson).toList();
 
@@ -33,11 +34,9 @@ public class AttributeService {
             repository.publish(key, value, Duration.ofSeconds(ttl));
         }
         snapshot.put(key, value);
-
-        return "Attribute published";
     }
 
-    public String delete(String entity, String attribute, List<String> rawArgs) {
+    public void delete(String entity, String attribute, List<String> rawArgs) {
         List<Value> arguments = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
 
         Value         entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
@@ -45,8 +44,6 @@ public class AttributeService {
 
         repository.remove(key);
         snapshot.remove(key);
-
-        return "Attribute deleted";
     }
 
     public String get(String entity, String attribute, List<String> rawArgs) {
