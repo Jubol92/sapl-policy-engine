@@ -20,12 +20,14 @@ package io.sapl.node.attributes;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import tools.jackson.databind.JsonNode;
+
 import java.util.List;
 
 @Getter
 @Setter
 @NoArgsConstructor
 public class PushRequest {
-    private String       value;         // required
-    private List<Object> arguments;     // optional
+    private JsonNode       value;         // required
+    private List<JsonNode> arguments;     // optional
 }

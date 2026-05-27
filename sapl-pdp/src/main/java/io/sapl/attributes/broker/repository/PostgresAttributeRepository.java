@@ -29,6 +29,7 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 @SuppressWarnings("unused")
@@ -130,8 +131,9 @@ public class PostgresAttributeRepository implements AttributeRepository {
                     + "VALUES (:name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt)")
                     .bind("name", key.name()).bind("arguments", argumentsJson).bind("value", valueJson);
 
-            insertSpec = expiresAt != null ? insertSpec.bind("expiresAt", expiresAt.atOffset(java.time.ZoneOffset.UTC))
+            insertSpec = expiresAt != null ? insertSpec.bind("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
                     : insertSpec.bindNull("expiresAt", OffsetDateTime.class);
+
             (entityJson != null ? insertSpec.bind("entity", entityJson) : insertSpec.bindNull("entity", String.class))
                     .then().block();
         } catch (JsonProcessingException e) {

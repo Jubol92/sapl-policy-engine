@@ -19,6 +19,7 @@ package io.sapl.node.attributes;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -92,5 +93,12 @@ public class AttributePushController {
     @GetMapping("/entity/{entity}")
     public String getAllAttributesOfEntity(@PathVariable String entity) {
         return service.getAll(entity);
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Void> handleInvalidArgument(IllegalArgumentException e) {
+        log.warn(e.getMessage());
+        // ggf. RFC 7808 konform? JSON mit error message
+        return ResponseEntity.badRequest().build();
     }
 }
