@@ -294,9 +294,6 @@ bucket4j:
 # --- Actuator Endpoints ---
 
 management:
-  health:
-    mongo:
-      enabled: false
   endpoint:
     health:
       show-details: when-authorized

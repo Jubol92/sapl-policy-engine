@@ -10,6 +10,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -50,8 +51,9 @@ public class AttributeService {
         List<Value>   arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
         Value         entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
         RepositoryKey key         = new RepositoryKey(entityValue, attribute, arguments);
-        Value         value       = snapshot.get(key);
-        return value != null ? value.toString() : "Not found";
+        if (!snapshot.containsKey(key))
+            throw new NoSuchElementException();
+        return snapshot.get(key).toString();
     }
 
     public String getAll(String entity) {

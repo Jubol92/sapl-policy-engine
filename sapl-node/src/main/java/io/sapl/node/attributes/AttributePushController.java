@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 @SuppressWarnings("unused")
 @Slf4j
@@ -101,7 +102,11 @@ public class AttributePushController {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Void> handleInvalidArgument(IllegalArgumentException e) {
         log.warn(e.getMessage());
-        // ggf. RFC 7808 konform? JSON mit error message
         return ResponseEntity.badRequest().build();
+    }
+
+    @ExceptionHandler(NoSuchElementException.class)
+    public ResponseEntity<Void> handleNotFound(NoSuchElementException e) {
+        return ResponseEntity.notFound().build();
     }
 }

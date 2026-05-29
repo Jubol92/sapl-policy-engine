@@ -20,6 +20,7 @@ package io.sapl.pdp.configuration;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.ConnectionString;
 import com.mongodb.reactivestreams.client.MongoClients;
+import io.lettuce.core.RedisClient;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
@@ -28,6 +29,7 @@ import io.sapl.attributes.broker.AttributeRepository;
 import io.sapl.attributes.broker.repository.InMemoryAttributeRepository;
 import io.sapl.attributes.broker.repository.MongoAttributeRepository;
 import io.sapl.attributes.broker.repository.PostgresAttributeRepository;
+import io.sapl.attributes.broker.repository.RedisAttributeRepository;
 import io.sapl.attributes.libraries.UserPolicyInformationPoint;
 import io.sapl.pdp.PolicyDecisionPointBuilder;
 import org.springframework.beans.factory.annotation.Value;
@@ -66,6 +68,19 @@ public class AttributeConfiguration {
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
     public AttributeRepository mongoAttributeRepository(ReactiveMongoTemplate template, ObjectMapper mapper) {
         return new MongoAttributeRepository(template, mapper);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
+    public RedisClient redisClient(@Value("${spring.data.redis.url:redis://localhost:6379}") String uri) {
+        return RedisClient.create(uri);
+    }
+
+    @Bean
+    @Primary
+    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
+    public AttributeRepository redisAttributeRepository(RedisClient client) {
+        return new RedisAttributeRepository(client);
     }
 
     @Bean
