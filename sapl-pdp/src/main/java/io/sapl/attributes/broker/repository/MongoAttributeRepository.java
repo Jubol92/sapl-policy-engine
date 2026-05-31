@@ -35,10 +35,15 @@ import java.util.Date;
 import java.util.List;
 
 @SuppressWarnings("unused")
-public class MongoAttributeRepository implements AttributeRepository {
+public class MongoAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
     // Delegate Pattern . observer(), close() etc are generated
     @Delegate(excludes = ExcludedMethods.class)
     private final InMemoryAttributeRepository internalRepository;
+
+    @Override
+    public Value get(RepositoryKey key) {
+        return null;
+    }
 
     private interface ExcludedMethods {
         void publish(RepositoryKey key, Value value);

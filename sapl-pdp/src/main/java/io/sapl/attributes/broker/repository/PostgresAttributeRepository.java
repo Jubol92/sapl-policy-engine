@@ -20,6 +20,7 @@ package io.sapl.attributes.broker.repository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.sapl.api.attributes.AttributeFinderInvocation;
 import io.sapl.api.model.Value;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
@@ -33,7 +34,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 
 @SuppressWarnings("unused")
-public class PostgresAttributeRepository implements AttributeRepository {
+public class PostgresAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
     private static final String ERROR_WHILE_SERIALIZING = "Failed to serialize attribute";
 
     // Delegate Pattern . observer(), close() etc are generated
@@ -49,6 +50,13 @@ public class PostgresAttributeRepository implements AttributeRepository {
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
         loadFromDB();
     }
+
+    @Override
+    public Value get(RepositoryKey key) {
+        
+        return null;
+    }
+
 
     private interface ExcludedMethods {
         void publish(RepositoryKey key, Value value);

@@ -29,21 +29,21 @@ import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
 import org.jspecify.annotations.Nullable;
 import java.time.Duration;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
-public class RedisAttributeRepository implements AttributeRepository {
+public class RedisAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String ERROR_CLOSED           = "Repository is closed.";
 
+    private final ReentrantLock                                 lock = new ReentrantLock(true);
     private final RedisClient                                   client;
     private final StatefulRedisConnection<String, String>       connection;
     private final RedisCommands<String, String>                 cli;
     private final StatefulRedisPubSubConnection<String, String> pubsub;
 
-    private final Map<String, Set<Consumer<Value>>> observersByKey = new ConcurrentHashMap<>();
+    private final Map<String, Set<Consumer<Value>>> observersByKey = new HashMap<>();
 
     private boolean closed = false;
 
@@ -75,10 +75,15 @@ public class RedisAttributeRepository implements AttributeRepository {
 
     @Override
     public void close() {
-        if (closed) {
-            return;
+        lock.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            closed = true;
+        } finally {
+            lock.unlock();
         }
-        closed = true;
         pubsub.sync().unsubscribe();
         pubsub.sync().punsubscribe();
         connection.close();
@@ -115,28 +120,48 @@ public class RedisAttributeRepository implements AttributeRepository {
         cli.publish("sapl:changes:" + toRedisKey(key), "UNDEFINED");
     }
 
+    @Override
     public Value get(@NonNull RepositoryKey key) {
-        return toValueFromRedisValue(cli.get(toRedisKey(key)));
+        var raw     = cli.get(toRedisKey(key));
+        return toValueFromRedisValue(raw);
     }
 
     @Override
     public Registration observe(@NonNull AttributeFinderInvocation invocation, @NonNull Consumer<Value> onValue) {
-        if (closed) {
-            Value.error(ERROR_CLOSED);
-        }
-
-        RepositoryKey key      = new RepositoryKey(invocation.entity(), invocation.attributeName(),
+        RepositoryKey key = new RepositoryKey(invocation.entity(), invocation.attributeName(),
                 invocation.arguments());
-        String        redisKey = toRedisKey(key);
+        String redisKey = toRedisKey(key);
+        Value initial;
 
-        // Register callback for future changes
-        observersByKey.computeIfAbsent(redisKey, k -> ConcurrentHashMap.newKeySet()).add(onValue);
+        lock.lock();
+        try {
 
-        // Deliver current value immediately
-        onValue.accept(get(key));
+            if (closed) {
+                initial = Value.error(ERROR_CLOSED); // do not register observer in error case
+            } else {
+                    // Register callback for future changes
+                    observersByKey.computeIfAbsent(redisKey, k -> new HashSet<>()).add(onValue);
+                    initial = get(key);
+                }
+            }
+            finally {
+                lock.unlock();
+            }
 
-        // Return handle to unregister the callback
-        return () -> observersByKey.getOrDefault(redisKey, Set.of()).remove(onValue);
+            // Deliver current value immediately
+            onValue.accept(initial);
+
+            // Return a registration to remove the observer
+            return () -> {
+                lock.lock();
+                try {
+                    var bucket = observersByKey.get(redisKey);
+                    if (bucket != null) bucket.remove(onValue);  // No-Op wenn nie registriert
+                } finally {
+                    lock.unlock();
+                }
+            };
+
     }
 
     private String toRedisKey(RepositoryKey key) {
@@ -172,7 +197,16 @@ public class RedisAttributeRepository implements AttributeRepository {
     }
 
     private void notifyObservers(String redisKey, Value value) {
-        var observers = observersByKey.getOrDefault(redisKey, Set.of());
-        observers.forEach(callback -> callback.accept(value));
+        List<Consumer<Value>> toFire;
+        lock.lock();
+        try {
+            var bucket = observersByKey.get(redisKey);
+            toFire = bucket != null ? new ArrayList<>(bucket) : List.of();
+        }
+        finally{
+            lock.unlock();
+        }
+
+        toFire.forEach(callback -> callback.accept(value));
     }
 }
