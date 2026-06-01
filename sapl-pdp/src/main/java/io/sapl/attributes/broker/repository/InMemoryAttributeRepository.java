@@ -27,13 +27,7 @@ import lombok.val;
 import org.jspecify.annotations.Nullable;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -57,7 +51,7 @@ import java.util.function.Consumer;
  * @since 4.1.0
  */
 @Slf4j
-public final class InMemoryAttributeRepository implements AttributeRepository {
+public final class InMemoryAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
 
     private static final String ERROR_CLOSED           = "Repository is closed.";
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
@@ -239,6 +233,18 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
     private void fireObservers(List<KeyObserver> observers, Value value) {
         for (val observer : observers) {
             observer.deliver(value);
+        }
+    }
+
+    // GET is needed for the Push API to read Attribute out of a policy context
+    @Override
+    public Value get(RepositoryKey key) {
+        lock.lock();
+        try {
+            val entry = entries.get(key);
+            return entry != null ? entry.value : Value.UNDEFINED;
+        } finally {
+            lock.unlock();
         }
     }
 

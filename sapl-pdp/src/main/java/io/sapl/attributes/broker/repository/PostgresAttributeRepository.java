@@ -20,7 +20,6 @@ package io.sapl.attributes.broker.repository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.sapl.api.attributes.AttributeFinderInvocation;
 import io.sapl.api.model.Value;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
@@ -53,10 +52,8 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
 
     @Override
     public Value get(RepositoryKey key) {
-        
-        return null;
+        return internalRepository.get(key);
     }
-
 
     private interface ExcludedMethods {
         void publish(RepositoryKey key, Value value);

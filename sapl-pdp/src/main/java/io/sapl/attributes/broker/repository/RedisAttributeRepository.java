@@ -122,16 +122,16 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
 
     @Override
     public Value get(@NonNull RepositoryKey key) {
-        var raw     = cli.get(toRedisKey(key));
+        var raw = cli.get(toRedisKey(key));
         return toValueFromRedisValue(raw);
     }
 
     @Override
     public Registration observe(@NonNull AttributeFinderInvocation invocation, @NonNull Consumer<Value> onValue) {
-        RepositoryKey key = new RepositoryKey(invocation.entity(), invocation.attributeName(),
+        RepositoryKey key      = new RepositoryKey(invocation.entity(), invocation.attributeName(),
                 invocation.arguments());
-        String redisKey = toRedisKey(key);
-        Value initial;
+        String        redisKey = toRedisKey(key);
+        Value         initial;
 
         lock.lock();
         try {
@@ -139,28 +139,28 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
             if (closed) {
                 initial = Value.error(ERROR_CLOSED); // do not register observer in error case
             } else {
-                    // Register callback for future changes
-                    observersByKey.computeIfAbsent(redisKey, k -> new HashSet<>()).add(onValue);
-                    initial = get(key);
-                }
+                // Register callback for future changes
+                observersByKey.computeIfAbsent(redisKey, k -> new HashSet<>()).add(onValue);
+                initial = get(key);
             }
-            finally {
+        } finally {
+            lock.unlock();
+        }
+
+        // Deliver current value immediately
+        onValue.accept(initial);
+
+        // Return a registration to remove the observer
+        return () -> {
+            lock.lock();
+            try {
+                var bucket = observersByKey.get(redisKey);
+                if (bucket != null)
+                    bucket.remove(onValue);  // No-Op wenn nie registriert
+            } finally {
                 lock.unlock();
             }
-
-            // Deliver current value immediately
-            onValue.accept(initial);
-
-            // Return a registration to remove the observer
-            return () -> {
-                lock.lock();
-                try {
-                    var bucket = observersByKey.get(redisKey);
-                    if (bucket != null) bucket.remove(onValue);  // No-Op wenn nie registriert
-                } finally {
-                    lock.unlock();
-                }
-            };
+        };
 
     }
 
@@ -202,8 +202,7 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
         try {
             var bucket = observersByKey.get(redisKey);
             toFire = bucket != null ? new ArrayList<>(bucket) : List.of();
-        }
-        finally{
+        } finally {
             lock.unlock();
         }
 

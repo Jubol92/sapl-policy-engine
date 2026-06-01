@@ -21,7 +21,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.net.URI;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -91,18 +90,10 @@ public class AttributePushController {
         return ResponseEntity.ok(service.get(null, name, args));
     }
 
-    // Spring prefers literal path segments over variables, so /entity/{entity}
-    // takes priority over /{name}
-    @SuppressWarnings("unused")
-    @GetMapping("/entity/{entity}")
-    public ResponseEntity<String> getAllAttributesOfEntity(@PathVariable String entity) {
-        return ResponseEntity.ok(service.getAll(entity));
-    }
-
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Void> handleInvalidArgument(IllegalArgumentException e) {
+    public ResponseEntity<String> handleInvalidArgument(IllegalArgumentException e) {
         log.warn(e.getMessage());
-        return ResponseEntity.badRequest().build();
+        return ResponseEntity.badRequest().body(e.getMessage());
     }
 
     @ExceptionHandler(NoSuchElementException.class)

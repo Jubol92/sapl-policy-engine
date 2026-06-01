@@ -42,7 +42,7 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
 
     @Override
     public Value get(RepositoryKey key) {
-        return null;
+        return internalRepository.get(key);
     }
 
     private interface ExcludedMethods {

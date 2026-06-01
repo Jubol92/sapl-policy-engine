@@ -1,25 +1,21 @@
 package io.sapl.node.attributes;
 
 import io.sapl.api.model.Value;
-import io.sapl.attributes.broker.AttributeRepository;
+import io.sapl.attributes.broker.repository.ReadableAttributeRepository;
 import io.sapl.attributes.broker.repository.RepositoryKey;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-
 import java.time.Duration;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
 public class AttributeService {
-    private final AttributeRepository                     repository;
-    private final ConcurrentHashMap<RepositoryKey, Value> snapshot = new ConcurrentHashMap<>();
-    private final ObjectMapper                            mapper;     // needed for JsonNode
+    private final ReadableAttributeRepository repository;
+    private final ObjectMapper                mapper;     // needed for JsonNode
 
     public void publish(String entity, String attribute, long ttl, PushRequest body) {
         List<Value> arguments = body.getArguments() == null ? List.of()
@@ -34,7 +30,6 @@ public class AttributeService {
         } else {
             repository.publish(key, value, Duration.ofSeconds(ttl));
         }
-        snapshot.put(key, value);
     }
 
     public void delete(String entity, String attribute, List<String> rawArgs) {
@@ -44,23 +39,17 @@ public class AttributeService {
         RepositoryKey key         = new RepositoryKey(entityValue, attribute, arguments);
 
         repository.remove(key);
-        snapshot.remove(key);
     }
 
     public String get(String entity, String attribute, List<String> rawArgs) {
         List<Value>   arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
         Value         entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
         RepositoryKey key         = new RepositoryKey(entityValue, attribute, arguments);
-        if (!snapshot.containsKey(key))
-            throw new NoSuchElementException();
-        return snapshot.get(key).toString();
-    }
+        Value         value       = repository.get(key);
 
-    public String getAll(String entity) {
-        Value entityValue = Value.of(entity);
-        return snapshot.entrySet().stream().filter(e -> Objects.equals(e.getKey().entity(), entityValue))
-                .map(e -> e.getKey().name() + ": " + e.getValue()).reduce((a, b) -> a + "\n" + b)
-                .orElse("No attributes found");
+        if (value == Value.UNDEFINED) // Value.UNDEFINED if key doesn't exist
+            throw new NoSuchElementException();
+        return repository.get(key).toString();
     }
 
     // Converts the type within the JsonNode to the SAPL value
