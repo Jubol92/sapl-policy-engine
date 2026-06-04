@@ -17,10 +17,9 @@
  */
 package io.sapl.attributes.broker.repository;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.sapl.api.model.ArrayValue;
 import io.sapl.api.model.Value;
+import io.sapl.api.model.ValueJsonMarshaller;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
 import lombok.experimental.Delegate;
@@ -32,20 +31,18 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 
+// Using R2DBC because it's reactive. JPA/Hibernate would block
 @SuppressWarnings("unused")
 public class PostgresAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
-    private static final String ERROR_WHILE_SERIALIZING = "Failed to serialize attribute";
 
     // Delegate Pattern . observer(), close() etc are generated
     @Delegate(excludes = PostgresAttributeRepository.ExcludedMethods.class)
     private final InMemoryAttributeRepository internalRepository;
 
     private final DatabaseClient client;
-    private final ObjectMapper   mapper;
 
-    public PostgresAttributeRepository(DatabaseClient client, ObjectMapper mapper) {
+    public PostgresAttributeRepository(DatabaseClient client) {
         this.client             = client;
-        this.mapper             = mapper;
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
         loadFromDB();
     }
@@ -93,73 +90,77 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
         if (rows == null)
             return;
 
-        try {
-            for (var row : rows) {
-                var key       = new RepositoryKey(
-                        row.entity() != null ? mapper.readValue(row.entity(), Value.class) : null, row.name(),
-                        row.arguments() != null ? mapper.readValue(row.arguments(), new TypeReference<>() {})
-                                : List.of());
-                var value     = mapper.readValue(row.value(), Value.class);
-                var expiresAt = row.expiresAt() != null ? row.expiresAt().toInstant() : null;
+        for (var row : rows) {
+            var key       = new RepositoryKey(row.entity() != null ? ValueJsonMarshaller.json(row.entity()) : null,
+                    row.name(), jsonToValues(row.arguments()));
+            var value     = ValueJsonMarshaller.json(row.value());
+            var expiresAt = row.expiresAt() != null ? row.expiresAt().toInstant() : null;
 
-                if (expiresAt != null) {
-                    var remainingTTL = Duration.between(Instant.now(), expiresAt);
-                    if (!remainingTTL.isNegative()) {
-                        internalRepository.publish(key, value, remainingTTL);
-                    } else {
-                        deleteFromDB(key);
-                    }
+            if (expiresAt != null) {
+                var remainingTTL = Duration.between(Instant.now(), expiresAt);
+                if (!remainingTTL.isNegative()) {
+                    internalRepository.publish(key, value, remainingTTL);
                 } else {
-                    internalRepository.publish(key, value);
+                    deleteFromDB(key);
                 }
+            } else {
+                internalRepository.publish(key, value);
             }
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException(ERROR_WHILE_SERIALIZING, e);
         }
     }
 
     private void upsertToDB(@NonNull RepositoryKey key, Value value, @Nullable Instant expiresAt) {
-        try {
-            var entityJson    = key.entity() != null ? mapper.writeValueAsString(key.entity()) : null;
-            var argumentsJson = mapper.writeValueAsString(key.arguments());
-            var valueJson     = mapper.writeValueAsString(value);
+        var entityJson    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
+        var argumentsJson = valuesToJson(key.arguments());
+        var valueJson     = ValueJsonMarshaller.toJsonString(value);
 
-            var deleteSpec = client
-                    .sql("DELETE FROM attributes " + "WHERE name = :name "
-                            + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
-                            + "AND arguments = CAST(:arguments AS jsonb)")
-                    .bind("name", key.name()).bind("arguments", argumentsJson);
-            (entityJson != null ? deleteSpec.bind("entity", entityJson) : deleteSpec.bindNull("entity", String.class))
-                    .then().block();
+        var deleteSpec = client
+                .sql("DELETE FROM attributes " + "WHERE name = :name "
+                        + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
+                        + "AND arguments = CAST(:arguments AS jsonb)")
+                .bind("name", key.name()).bind("arguments", argumentsJson);
+        (entityJson != null ? deleteSpec.bind("entity", entityJson) : deleteSpec.bindNull("entity", String.class))
+                .then().block();
 
-            var insertSpec = client.sql("INSERT INTO attributes (name, entity, arguments, value, expires_at) "
-                    + "VALUES (:name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt)")
-                    .bind("name", key.name()).bind("arguments", argumentsJson).bind("value", valueJson);
+        var insertSpec = client.sql("INSERT INTO attributes (name, entity, arguments, value, expires_at) "
+                + "VALUES (:name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt)")
+                .bind("name", key.name()).bind("arguments", argumentsJson).bind("value", valueJson);
 
-            insertSpec = expiresAt != null ? insertSpec.bind("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
-                    : insertSpec.bindNull("expiresAt", OffsetDateTime.class);
+        insertSpec = expiresAt != null ? insertSpec.bind("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
+                : insertSpec.bindNull("expiresAt", OffsetDateTime.class);
 
-            (entityJson != null ? insertSpec.bind("entity", entityJson) : insertSpec.bindNull("entity", String.class))
-                    .then().block();
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException(ERROR_WHILE_SERIALIZING, e);
-        }
+        (entityJson != null ? insertSpec.bind("entity", entityJson) : insertSpec.bindNull("entity", String.class))
+                .then().block();
     }
 
     public void deleteFromDB(@NonNull RepositoryKey key) {
-        try {
-            var entityJson    = key.entity() != null ? mapper.writeValueAsString(key.entity()) : null;
-            var argumentsJson = mapper.writeValueAsString(key.arguments());
+        var entityJson    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
+        var argumentsJson = valuesToJson(key.arguments());
 
-            var spec = client
-                    .sql("DELETE FROM attributes " + "WHERE name = :name "
-                            + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
-                            + "AND arguments = CAST(:arguments AS jsonb)")
-                    .bind("name", key.name()).bind("arguments", argumentsJson);
-            (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class)).then()
-                    .block();
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException(ERROR_WHILE_SERIALIZING, e);
+        var spec = client
+                .sql("DELETE FROM attributes " + "WHERE name = :name "
+                        + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
+                        + "AND arguments = CAST(:arguments AS jsonb)")
+                .bind("name", key.name()).bind("arguments", argumentsJson);
+        (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class)).then().block();
+    }
+
+    private static String valuesToJson(List<Value> values) {
+        if (values.isEmpty())
+            return "[]";
+        var sb = new StringBuilder("[");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0)
+                sb.append(',');
+            sb.append(ValueJsonMarshaller.toJsonString(values.get(i)));
         }
+        return sb.append(']').toString();
+    }
+
+    private static List<Value> jsonToValues(String json) {
+        if (json == null || json.isBlank())
+            return List.of();
+        var parsed = ValueJsonMarshaller.json(json);
+        return parsed instanceof ArrayValue arr ? arr.stream().toList() : List.of();
     }
 }

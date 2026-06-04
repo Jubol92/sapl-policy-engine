@@ -59,15 +59,15 @@ public class AttributeConfiguration {
     @Bean
     @Primary
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public AttributeRepository postgresAttributeRepository(DatabaseClient client, ObjectMapper mapper) {
-        return new PostgresAttributeRepository(client, mapper);
+    public AttributeRepository postgresAttributeRepository(DatabaseClient client) {
+        return new PostgresAttributeRepository(client);
     }
 
     @Bean
     @Primary
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public AttributeRepository mongoAttributeRepository(ReactiveMongoTemplate template, ObjectMapper mapper) {
-        return new MongoAttributeRepository(template, mapper);
+    public AttributeRepository mongoAttributeRepository(ReactiveMongoTemplate template) {
+        return new MongoAttributeRepository(template);
     }
 
     @Bean
@@ -107,7 +107,6 @@ public class AttributeConfiguration {
     public ObjectMapper objectMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.findAndRegisterModules();
-        mapper.activateDefaultTyping(mapper.getPolymorphicTypeValidator(), ObjectMapper.DefaultTyping.NON_FINAL);
         return mapper;
     }
 

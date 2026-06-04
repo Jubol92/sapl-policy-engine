@@ -17,14 +17,14 @@
  */
 package io.sapl.attributes.broker.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.sapl.api.model.ArrayValue;
 import io.sapl.api.model.Value;
+import io.sapl.api.model.ValueJsonMarshaller;
 import io.sapl.attributes.broker.AttributeRepository;
-import lombok.SneakyThrows;
-import org.jspecify.annotations.Nullable;
 import lombok.NonNull;
 import lombok.experimental.Delegate;
 import org.bson.Document;
+import org.jspecify.annotations.Nullable;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -54,19 +54,25 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
     }
 
     private final ReactiveMongoTemplate mongo;
-    private final ObjectMapper          mapper;
 
-    public MongoAttributeRepository(ReactiveMongoTemplate mongo, ObjectMapper mapper) {
+    public MongoAttributeRepository(ReactiveMongoTemplate mongo) {
         this.mongo              = mongo;
-        this.mapper             = mapper;
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
         loadFromDB();
     }
 
     public void loadFromDB() {
         mongo.find(new Query(), Document.class, "attributes").toStream().forEach(doc -> {
-            var key       = keyFromDoc(doc);
-            var value     = fromMongoDocument(doc.get("value", Document.class));
+            var entityJson = doc.getString("entity");
+            var argsJson   = doc.getString("arguments");
+            var valueJson  = doc.getString("value");
+
+            if (valueJson == null)
+                return;
+
+            var key       = new RepositoryKey(entityJson != null ? ValueJsonMarshaller.json(entityJson) : null,
+                    doc.getString("name"), jsonToValues(argsJson));
+            var value     = ValueJsonMarshaller.json(valueJson);
             var dateField = doc.getDate("expiresAt");
             var expiresAt = dateField != null ? dateField.toInstant() : null;
 
@@ -81,13 +87,6 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
                 internalRepository.publish(key, value);
             }
         });
-    }
-
-    private RepositoryKey keyFromDoc(Document doc) {
-        var entityDoc = doc.get("entity", Document.class);
-        var argDocs   = doc.getList("arguments", Document.class);
-        return new RepositoryKey(entityDoc != null ? fromMongoDocument(entityDoc) : null, doc.getString("name"),
-                argDocs != null ? argDocs.stream().map(this::fromMongoDocument).toList() : List.of());
     }
 
     public void deleteFromDB(@NonNull RepositoryKey key) {
@@ -107,10 +106,12 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
     }
 
     private void upsertToDB(@NonNull RepositoryKey key, Value value, @Nullable Instant expiresAt) {
-        var update = new Update().set("name", key.name())
-                .set("entity", key.entity() != null ? toMongoDocument(key.entity()) : null)
-                .set("arguments", key.arguments().stream().map(this::toMongoDocument).toList())
-                .set("value", toMongoDocument(value)).set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
+        var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
+        var argsJson   = valuesToJson(key.arguments());
+        var valueJson  = ValueJsonMarshaller.toJsonString(value);
+
+        var update = new Update().set("name", key.name()).set("entity", entityJson).set("arguments", argsJson)
+                .set("value", valueJson).set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
 
         mongo.upsert(doMongoQuery(key), update, "attributes").block();
     }
@@ -121,20 +122,30 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
         deleteFromDB(key);
     }
 
-    @SneakyThrows
-    private Document toMongoDocument(Value value) {
-        return Document.parse(mapper.writeValueAsString(value));
-    }
-
-    @SneakyThrows
-    private Value fromMongoDocument(Document doc) {
-        return mapper.readValue(doc.toJson(), Value.class);
-    }
-
     private Query doMongoQuery(RepositoryKey key) {
-        var criteria = Criteria.where("name").is(key.name()).and("entity")
-                .is(key.entity() != null ? toMongoDocument(key.entity()) : null).and("arguments")
-                .is(key.arguments().stream().map(this::toMongoDocument).toList());
+        var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
+        var argsJson   = valuesToJson(key.arguments());
+        var criteria   = Criteria.where("name").is(key.name()).and("entity").is(entityJson).and("arguments")
+                .is(argsJson);
         return new Query(criteria);
+    }
+
+    private static String valuesToJson(List<Value> values) {
+        if (values.isEmpty())
+            return "[]";
+        var sb = new StringBuilder("[");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0)
+                sb.append(',');
+            sb.append(ValueJsonMarshaller.toJsonString(values.get(i)));
+        }
+        return sb.append(']').toString();
+    }
+
+    private static List<Value> jsonToValues(String json) {
+        if (json == null || json.isBlank())
+            return List.of();
+        var parsed = ValueJsonMarshaller.json(json);
+        return parsed instanceof ArrayValue arr ? arr.stream().toList() : List.of();
     }
 }

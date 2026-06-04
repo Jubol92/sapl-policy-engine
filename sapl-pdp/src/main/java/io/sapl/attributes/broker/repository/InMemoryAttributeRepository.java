@@ -112,9 +112,7 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
             }
             toFire = observers(key);
         } finally {
-
             lock.unlock();
-
         }
         fireObservers(toFire, Value.UNDEFINED);
     }
