@@ -59,8 +59,8 @@ public class AttributeConfiguration {
     @Bean
     @Primary
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public AttributeRepository postgresAttributeRepository(DatabaseClient client) {
-        return new PostgresAttributeRepository(client);
+    public AttributeRepository postgresAttributeRepository(DatabaseClient client, ConnectionFactory connection) {
+        return new PostgresAttributeRepository(client, connection);
     }
 
     @Bean

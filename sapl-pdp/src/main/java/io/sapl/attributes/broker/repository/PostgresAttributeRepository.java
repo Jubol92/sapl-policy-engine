@@ -17,32 +17,53 @@
  */
 package io.sapl.attributes.broker.repository;
 
-import io.sapl.api.model.ArrayValue;
-import io.sapl.api.model.Value;
-import io.sapl.api.model.ValueJsonMarshaller;
+import io.r2dbc.postgresql.api.Notification;
+import io.r2dbc.postgresql.api.PostgresqlConnection;
+import io.r2dbc.spi.ConnectionFactory;
+import io.sapl.api.model.*;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
 import lombok.experimental.Delegate;
 import org.jspecify.annotations.Nullable;
 import org.springframework.r2dbc.core.DatabaseClient;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Objects;
 
 // Using R2DBC because it's reactive. JPA/Hibernate would block
+// R2DBC offers persistent DB connections. A consistent connection
+// is necessary because we need Postgres Pub/Sub
 @SuppressWarnings("unused")
 public class PostgresAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
 
     // Delegate Pattern . observer(), close() etc are generated
-    @Delegate(excludes = PostgresAttributeRepository.ExcludedMethods.class)
+    @Delegate(excludes = ExcludedMethods.class)
     private final InMemoryAttributeRepository internalRepository;
 
-    private final DatabaseClient client;
+    private final DatabaseClient       client;
+    private final PostgresqlConnection connection;
 
-    public PostgresAttributeRepository(DatabaseClient client) {
-        this.client             = client;
+    private record DBEntry(String name, String entity, String arguments, String value, OffsetDateTime expiresAt) {}
+
+    @SuppressWarnings("DataFlowIssue")
+    public PostgresAttributeRepository(DatabaseClient client, ConnectionFactory connection) {
+        this.client = client;
+
+        // Connect to the right channel to receive changes
+        this.connection = Mono.from(connection.create()).cast(PostgresqlConnection.class).block();
+        Mono.from(Objects.requireNonNull(this.connection).createStatement("LISTEN attribute_changes").execute())
+                .subscribe();
+
+        // boundedElastic --> allowing a thread pool with blocking operations
+        this.connection.getNotifications().map(Notification::getParameter).publishOn(Schedulers.boundedElastic())
+                .subscribe(this::handleNotification);
+
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
         loadFromDB();
     }
@@ -58,27 +79,36 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
         void publish(RepositoryKey key, Value value, Duration ttl);
 
         void remove(RepositoryKey key);
+
+        void close();
     }
 
     @Override
     public void publish(@NonNull RepositoryKey key, @NonNull Value value) {
         internalRepository.publish(key, value);
         upsertToDB(key, value, null);
+        notifyOthers(key);
     }
 
     @Override
     public void publish(@NonNull RepositoryKey key, @NonNull Value value, @NonNull Duration ttl) {
         internalRepository.publish(key, value, ttl);
         upsertToDB(key, value, Instant.now().plus(ttl));
+        notifyOthers(key);
     }
 
     @Override
     public void remove(@NonNull RepositoryKey key) {
         internalRepository.remove(key);
         deleteFromDB(key);
+        notifyOthers(key);
     }
 
-    private record DBEntry(String name, String entity, String arguments, String value, OffsetDateTime expiresAt) {}
+    @Override
+    public void close() {
+        internalRepository.close();
+        Mono.from(connection.close()).block();
+    }
 
     public void loadFromDB() {
         var rows = client.sql("SELECT name, entity, arguments, value, expires_at FROM attributes")
@@ -114,22 +144,25 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
         var argumentsJson = valuesToJson(key.arguments());
         var valueJson     = ValueJsonMarshaller.toJsonString(value);
 
-        var deleteSpec = client
-                .sql("DELETE FROM attributes " + "WHERE name = :name "
-                        + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
-                        + "AND arguments = CAST(:arguments AS jsonb)")
-                .bind("name", key.name()).bind("arguments", argumentsJson);
-        (entityJson != null ? deleteSpec.bind("entity", entityJson) : deleteSpec.bindNull("entity", String.class))
-                .then().block();
+        // ON CONFLICT triggers the unique constraint in the db if the value already
+        // exists
+        // Indexes:
+        // "attributes_name_entity_arguments_key" UNIQUE CONSTRAINT, btree (name,
+        // entity, arguments) NULLS NOT DISTINCT
+        // DO UPDATE executes an update statement instead. This logic implements a real
+        // upsert and an atomic execution
+        // The atomic execution is important to have the same Decision if a multi node
+        // setup is used
+        var upsertSpec = client.sql("INSERT INTO attributes (name, entity, arguments, value, expires_at) "
+                + "VALUES (:name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt) "
+                + "ON CONFLICT (name, entity, arguments) "
+                + "DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at").bind("name", key.name())
+                .bind("arguments", argumentsJson).bind("value", valueJson);
 
-        var insertSpec = client.sql("INSERT INTO attributes (name, entity, arguments, value, expires_at) "
-                + "VALUES (:name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt)")
-                .bind("name", key.name()).bind("arguments", argumentsJson).bind("value", valueJson);
+        upsertSpec = expiresAt != null ? upsertSpec.bind("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
+                : upsertSpec.bindNull("expiresAt", OffsetDateTime.class);
 
-        insertSpec = expiresAt != null ? insertSpec.bind("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
-                : insertSpec.bindNull("expiresAt", OffsetDateTime.class);
-
-        (entityJson != null ? insertSpec.bind("entity", entityJson) : insertSpec.bindNull("entity", String.class))
+        (entityJson != null ? upsertSpec.bind("entity", entityJson) : upsertSpec.bindNull("entity", String.class))
                 .then().block();
     }
 
@@ -146,15 +179,7 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
     }
 
     private static String valuesToJson(List<Value> values) {
-        if (values.isEmpty())
-            return "[]";
-        var sb = new StringBuilder("[");
-        for (int i = 0; i < values.size(); i++) {
-            if (i > 0)
-                sb.append(',');
-            sb.append(ValueJsonMarshaller.toJsonString(values.get(i)));
-        }
-        return sb.append(']').toString();
+        return ValueJsonMarshaller.toJsonString(Value.ofArray(values));
     }
 
     private static List<Value> jsonToValues(String json) {
@@ -162,5 +187,57 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
             return List.of();
         var parsed = ValueJsonMarshaller.json(json);
         return parsed instanceof ArrayValue arr ? arr.stream().toList() : List.of();
+    }
+
+    private void notifyOthers(RepositoryKey key) {
+        // The select is an alternative way to trigger the NOTIFY attribute_changes
+        // 'payload' or pg_notify function in Postgres
+        client.sql("SELECT pg_notify('attribute_changes', :payload)").bind("payload", keyToPayload(key)).then().block();
+    }
+
+    private void handleNotification(String payload) {
+        var key        = payloadToKey(payload);
+        var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
+
+        var spec = client
+                .sql("SELECT name, entity, arguments, value, expires_at FROM attributes " + "WHERE name = :name "
+                        + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
+                        + "AND arguments = CAST(:arguments AS jsonb)")
+                .bind("name", key.name()).bind("arguments", valuesToJson(key.arguments()));
+
+        var row = (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class))
+                .map(r -> new DBEntry(r.get("name", String.class), r.get("entity", String.class),
+                        r.get("arguments", String.class), r.get("value", String.class),
+                        r.get("expires_at", OffsetDateTime.class)))
+                .one().block();
+
+        if (row == null) {
+            internalRepository.remove(key);
+        } else {
+            var value     = ValueJsonMarshaller.json(row.value());
+            var expiresAt = row.expiresAt() != null ? row.expiresAt().toInstant() : null;
+            if (expiresAt != null) {
+                var ttl = Duration.between(Instant.now(), expiresAt);
+                if (!ttl.isNegative())
+                    internalRepository.publish(key, value, ttl);
+            } else {
+                internalRepository.publish(key, value);
+            }
+        }
+    }
+
+    private String keyToPayload(RepositoryKey key) {
+        return ValueJsonMarshaller.toJsonString(ObjectValue.builder().put("name", Value.of(key.name()))
+                .put("entity", key.entity() != null ? key.entity() : Value.NULL)
+                .put("arguments", Value.ofArray(key.arguments())).build());
+    }
+
+    private RepositoryKey payloadToKey(String payload) {
+        var node      = (ObjectValue) ValueJsonMarshaller.json(payload);
+        var name      = ((TextValue) Objects.requireNonNull(node.get("name"))).value();
+        var entityVal = node.get("entity");
+        var entity    = entityVal == Value.NULL ? null : entityVal;
+        var arguments = ((ArrayValue) Objects.requireNonNull(node.get("arguments"))).stream().toList();
+        return new RepositoryKey(entity, name, arguments);
     }
 }
