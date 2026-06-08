@@ -131,21 +131,12 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
     }
 
     private static String valuesToJson(List<Value> values) {
-        if (values.isEmpty())
-            return "[]";
-        var sb = new StringBuilder("[");
-        for (int i = 0; i < values.size(); i++) {
-            if (i > 0)
-                sb.append(',');
-            sb.append(ValueJsonMarshaller.toJsonString(values.get(i)));
-        }
-        return sb.append(']').toString();
+        return ValueJsonMarshaller.toJsonString(Value.ofArray(values));
     }
 
     private static List<Value> jsonToValues(String json) {
         if (json == null || json.isBlank())
             return List.of();
-        var parsed = ValueJsonMarshaller.json(json);
-        return parsed instanceof ArrayValue arr ? arr.stream().toList() : List.of();
+        return (ArrayValue) ValueJsonMarshaller.json(json);
     }
 }

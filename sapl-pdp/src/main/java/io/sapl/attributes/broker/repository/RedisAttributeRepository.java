@@ -76,6 +76,7 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     @Override
     public void close() {
         lock.lock();
+
         try {
             if (closed) {
                 return;
@@ -84,6 +85,7 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
         } finally {
             lock.unlock();
         }
+
         pubsub.sync().unsubscribe();
         pubsub.sync().punsubscribe();
         connection.close();
@@ -106,6 +108,7 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     private void publishInternal(@NonNull RepositoryKey key, @NonNull Value value, @Nullable Duration ttl) {
         String redisKey   = toRedisKey(key);
         String redisValue = toRawString(value);
+
         if (ttl == null) {
             cli.set(redisKey, redisValue);
         } else {
@@ -123,6 +126,7 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     @Override
     public Value get(@NonNull RepositoryKey key) {
         var raw = cli.get(toRedisKey(key));
+
         return toValueFromRedisValue(raw);
     }
 
@@ -161,7 +165,6 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
                 lock.unlock();
             }
         };
-
     }
 
     private String toRedisKey(RepositoryKey key) {
@@ -181,18 +184,23 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     private Value toValueFromRedisValue(String value) {
         if (value == null)
             return Value.UNDEFINED;
+
         if (value.equalsIgnoreCase("true"))
             return Value.of(true);
+
         if (value.equalsIgnoreCase("false"))
             return Value.of(false);
+
         try {
             return Value.of(Long.parseLong(value));
         } catch (NumberFormatException ignored) {
         }
+
         try {
             return Value.of(Double.parseDouble(value));
         } catch (NumberFormatException ignored) {
         }
+
         return Value.of(value);
     }
 

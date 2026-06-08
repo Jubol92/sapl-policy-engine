@@ -185,8 +185,7 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
     private static List<Value> jsonToValues(String json) {
         if (json == null || json.isBlank())
             return List.of();
-        var parsed = ValueJsonMarshaller.json(json);
-        return parsed instanceof ArrayValue arr ? arr.stream().toList() : List.of();
+        return (ArrayValue) ValueJsonMarshaller.json(json);
     }
 
     private void notifyOthers(RepositoryKey key) {
@@ -238,6 +237,7 @@ public class PostgresAttributeRepository implements AttributeRepository, Readabl
         var entityVal = node.get("entity");
         var entity    = entityVal == Value.NULL ? null : entityVal;
         var arguments = ((ArrayValue) Objects.requireNonNull(node.get("arguments"))).stream().toList();
+
         return new RepositoryKey(entity, name, arguments);
     }
 }
