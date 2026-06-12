@@ -78,6 +78,7 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
 
             if (expiresAt != null) {
                 var remainingTTL = Duration.between(Instant.now(), expiresAt);
+
                 if (!remainingTTL.isNegative()) {
                     internalRepository.publish(key, value, remainingTTL);
                 } else {
@@ -127,6 +128,7 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
         var argsJson   = valuesToJson(key.arguments());
         var criteria   = Criteria.where("name").is(key.name()).and("entity").is(entityJson).and("arguments")
                 .is(argsJson);
+
         return new Query(criteria);
     }
 
@@ -137,6 +139,7 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
     private static List<Value> jsonToValues(String json) {
         if (json == null || json.isBlank())
             return List.of();
+
         return (ArrayValue) ValueJsonMarshaller.json(json);
     }
 }

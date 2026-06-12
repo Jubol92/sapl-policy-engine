@@ -308,6 +308,13 @@ management:
       enabled: true
     readinessstate:
       enabled: true
+    # The r2dbc connection factory above always points at the docker-compose
+    # "postgres" host, regardless of which attribute storage backend is
+    # active. Outside that compose network (e.g. local dev with mongo/redis
+    # storage), the host does not resolve and drags the aggregate /actuator/
+    # health status to DOWN even though liveness/readiness are fine.
+    r2dbc:
+      enabled: false
 
 # --- Logging ---
 

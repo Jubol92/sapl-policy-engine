@@ -191,6 +191,10 @@ bucket4j:
               time: 1
               unit: seconds
   cache-to-use: caffeine
+management:
+  health:
+    r2dbc:
+      enabled: false
 spring.main.banner-mode: OFF
 logging.level:
   root: OFF

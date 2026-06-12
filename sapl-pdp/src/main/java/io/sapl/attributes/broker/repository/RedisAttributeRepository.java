@@ -23,8 +23,8 @@ import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import io.sapl.api.attributes.AttributeFinderInvocation;
-import io.sapl.api.model.TextValue;
 import io.sapl.api.model.Value;
+import io.sapl.api.model.ValueJsonMarshaller;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
 import org.jspecify.annotations.Nullable;
@@ -36,6 +36,8 @@ import java.util.function.Consumer;
 public class RedisAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String ERROR_CLOSED           = "Repository is closed.";
+
+    private static final String UNDEFINED_STRING = "UNDEFINED";
 
     private final ReentrantLock                                 lock = new ReentrantLock(true);
     private final RedisClient                                   client;
@@ -68,7 +70,11 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
             public void message(String pattern, String channel, String message) {
                 // sapl:changes:* → Wertänderungen
                 String redisKey = channel.substring("sapl:changes:".length());
-                notifyObservers(redisKey, toValueFromRedisValue(message));
+                // notifyObservers(redisKey, toValueFromRedisValue(message));
+                Value value = message.equals(UNDEFINED_STRING) ? Value.UNDEFINED : ValueJsonMarshaller.json(message);
+
+                // notifyObservers(redisKey, message);
+                notifyObservers(redisKey, value);
             }
         });
     }
@@ -106,8 +112,9 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     }
 
     private void publishInternal(@NonNull RepositoryKey key, @NonNull Value value, @Nullable Duration ttl) {
-        String redisKey   = toRedisKey(key);
-        String redisValue = toRawString(value);
+        String redisKey = toRedisKey(key);
+        // String redisValue = toRawString(value);
+        String redisValue = ValueJsonMarshaller.toJsonString(value);
 
         if (ttl == null) {
             cli.set(redisKey, redisValue);
@@ -120,24 +127,27 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     @Override
     public void remove(@NonNull RepositoryKey key) {
         cli.del(toRedisKey(key));
-        cli.publish("sapl:changes:" + toRedisKey(key), "UNDEFINED");
+        // cli.publish("sapl:changes:" + toRedisKey(key), "UNDEFINED");
+        cli.publish("sapl:changes:" + toRedisKey(key), UNDEFINED_STRING);
     }
 
     @Override
     public Value get(@NonNull RepositoryKey key) {
         var raw = cli.get(toRedisKey(key));
 
-        return toValueFromRedisValue(raw);
+        // return toValueFromRedisValue(raw);
+        return raw != null ? ValueJsonMarshaller.json(raw) : Value.UNDEFINED;
     }
 
     @Override
     public Registration observe(@NonNull AttributeFinderInvocation invocation, @NonNull Consumer<Value> onValue) {
-        RepositoryKey key      = new RepositoryKey(invocation.entity(), invocation.attributeName(),
-                invocation.arguments());
-        String        redisKey = toRedisKey(key);
-        Value         initial;
+        RepositoryKey key = new RepositoryKey(invocation.entity(), invocation.attributeName(), invocation.arguments());
+
+        String redisKey = toRedisKey(key);
+        Value  initial;
 
         lock.lock();
+
         try {
 
             if (closed) {
@@ -157,6 +167,7 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
         // Return a registration to remove the observer
         return () -> {
             lock.lock();
+
             try {
                 var bucket = observersByKey.get(redisKey);
                 if (bucket != null)
@@ -168,40 +179,19 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     }
 
     private String toRedisKey(RepositoryKey key) {
-        String entity    = key.entity() != null ? toRawString(key.entity()) : "";
-        String arguments = key.arguments().stream().map(this::toRawString).toList().toString();
+        // String entity = key.entity() != null ? toRawString(key.entity()) : "";
+        // String arguments =
+        // key.arguments().stream().map(this::toRawString).toList().toString();
+
+        // return "sapl:attribute:" + entity + ":" + key.name() + ":" + arguments;
+        String entity    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : "null";
+        String arguments = valuesToJson(key.arguments());
 
         return "sapl:attribute:" + entity + ":" + key.name() + ":" + arguments;
     }
 
-    private String toRawString(Value value) {
-        return switch (value) {
-        case TextValue(String s) -> s;
-        default                  -> value.toString();
-        };
-    }
-
-    private Value toValueFromRedisValue(String value) {
-        if (value == null)
-            return Value.UNDEFINED;
-
-        if (value.equalsIgnoreCase("true"))
-            return Value.of(true);
-
-        if (value.equalsIgnoreCase("false"))
-            return Value.of(false);
-
-        try {
-            return Value.of(Long.parseLong(value));
-        } catch (NumberFormatException ignored) {
-        }
-
-        try {
-            return Value.of(Double.parseDouble(value));
-        } catch (NumberFormatException ignored) {
-        }
-
-        return Value.of(value);
+    private String valuesToJson(List<Value> values) {
+        return ValueJsonMarshaller.toJsonString(Value.ofArray(values));
     }
 
     private void notifyObservers(String redisKey, Value value) {
@@ -216,4 +206,38 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
 
         toFire.forEach(callback -> callback.accept(value));
     }
+
+    /*
+     * private String toRawString(Value value) {
+     * return switch (value) {
+     * case TextValue(String s) -> s;
+     * default -> value.toString();
+     * };
+     * }
+     */
+
+    /*
+     * private Value toValueFromRedisValue(String value) {
+     * if (value == null)
+     * return Value.UNDEFINED;
+     *
+     * if (value.equalsIgnoreCase("true"))
+     * return Value.of(true);
+     *
+     * if (value.equalsIgnoreCase("false"))
+     * return Value.of(false);
+     *
+     * try {
+     * return Value.of(Long.parseLong(value));
+     * } catch (NumberFormatException ignored) {
+     * }
+     *
+     * try {
+     * return Value.of(Double.parseDouble(value));
+     * } catch (NumberFormatException ignored) {
+     * }
+     *
+     * return Value.of(value);
+     * }
+     */
 }

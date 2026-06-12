@@ -49,7 +49,7 @@ import io.sapl.pdp.configuration.AttributeConfiguration;
 import org.springframework.context.annotation.Import;
 
 @EnableCaching
-@ComponentScan({ "io.sapl.node", "io.sapl.server" })
+@ComponentScan({ "io.sapl.node", "io.sapl.server", "io.sapl.attributeapi" })
 @EnableConfigurationProperties(SaplNodeProperties.class)
 @ImportRuntimeHints(SaplNodeApplication.NativeResourceHints.class)
 // Transaction + persistence autoconfigure classes live in transitive Spring Boot
@@ -65,7 +65,16 @@ import org.springframework.context.annotation.Import;
         "org.springframework.boot.data.mongodb.autoconfigure.DataMongoAutoConfiguration",
         "org.springframework.boot.data.mongodb.autoconfigure.DataMongoReactiveAutoConfiguration",
         "org.springframework.boot.data.mongodb.autoconfigure.DataMongoReactiveRepositoriesAutoConfiguration",
-        "org.springframework.boot.data.mongodb.autoconfigure.DataMongoRepositoriesAutoConfiguration" })
+        "org.springframework.boot.data.mongodb.autoconfigure.DataMongoRepositoriesAutoConfiguration",
+        // sapl-pdp's AttributeConfiguration provides its own ConnectionFactory/
+        // DatabaseClient beans only when io.sapl.attributes.storage=postgres.
+        // Without these excludes, Spring Boot's generic R2DBC autoconfiguration
+        // eagerly creates a fallback ConnectionFactory bean and fails with
+        // "Failed to determine a suitable R2DBC Connection URL" for every other
+        // storage backend (including the heap default).
+        "org.springframework.boot.r2dbc.autoconfigure.ConnectionFactoryAutoConfiguration",
+        "org.springframework.boot.r2dbc.autoconfigure.R2dbcAutoConfiguration",
+        "org.springframework.boot.r2dbc.autoconfigure.health.ConnectionFactoryHealthContributorAutoConfiguration" })
 @Import({ AttributeConfiguration.class })
 public class SaplNodeApplication {
 

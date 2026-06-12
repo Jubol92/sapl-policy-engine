@@ -84,6 +84,20 @@
             <version>${project.version}</version>
         </dependency>
 		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>sapl-attribute-api</artifactId>
+			<version>${project.version}</version>
+			<exclusions>
+				<!-- sapl-node is Servlet/Jetty-based; avoid pulling reactor-netty
+				     and the reactive web server stack into the classpath. reactor-core
+				     itself is already provided via sapl-pdp-reactive. -->
+				<exclusion>
+					<groupId>org.springframework.boot</groupId>
+					<artifactId>spring-boot-starter-webflux</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
 			<groupId>io.sapl</groupId>
 			<artifactId>sapl-test</artifactId>
 			<version>${project.version}</version>

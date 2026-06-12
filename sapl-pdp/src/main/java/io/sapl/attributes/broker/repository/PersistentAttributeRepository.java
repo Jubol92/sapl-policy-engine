@@ -15,19 +15,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.node.attributes;
+package io.sapl.attributes.broker.repository;
 
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-import tools.jackson.databind.JsonNode;
+import io.sapl.api.model.Value;
 
-import java.util.List;
+import java.time.Instant;
 
-@Getter
-@Setter
-@NoArgsConstructor
-public class PushRequest {
-    private JsonNode       value;         // required
-    private List<JsonNode> arguments;     // optional
+public interface PersistentAttributeRepository {
+    void loadFromDB();
+
+    void deleteFromDB(RepositoryKey key);
+
+    void upsertToDB(RepositoryKey key, Value value, Instant expiresAt);
 }
