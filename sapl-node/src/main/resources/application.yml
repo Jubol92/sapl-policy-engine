@@ -39,15 +39,6 @@ spring:
       - ApiKeyCache
       - buckets
 
-  #data:
-  #  mongodb:
-  #    uri: mongodb://root:rooter@mongo:27017/sapl?authSource=admin
-  #    repositories:
-  #      enabled: false
-  r2dbc:
-    url: r2dbc:postgresql://postgres:5432/sapl
-    username: sapl
-    password: secret
 
 # --- Server ---
 
@@ -178,7 +169,34 @@ io.sapl:
     metrics-enabled: true
 
   attributes:
-    storage: postgres # heap | persistent | mongo | postgres
+    storage: postgres # heap | postgres | mongo | redis
+
+    # --- Storage Backend Connection ---
+    #
+    # Only the section matching `storage` above is used. No connection
+    # URLs/URIs needed; everything is plain host/port/credentials with
+    # sensible defaults (shown below).
+
+    postgres:
+      host: postgres
+      # port: 5432
+      database: sapl
+      username: sapl
+      password: secret
+
+    # mongo:
+    #   host: mongo
+    #   port: 27017
+    #   database: sapl
+    #   username: root
+    #   password: rooter
+    #   auth-database: admin
+
+    # redis:
+    #   host: redis
+    #   port: 6379
+    #   password:
+    #   database: 0
 
     # --- Decision Reporting ---
     #print-trace: true
@@ -308,11 +326,12 @@ management:
       enabled: true
     readinessstate:
       enabled: true
-    # The r2dbc connection factory above always points at the docker-compose
-    # "postgres" host, regardless of which attribute storage backend is
-    # active. Outside that compose network (e.g. local dev with mongo/redis
-    # storage), the host does not resolve and drags the aggregate /actuator/
-    # health status to DOWN even though liveness/readiness are fine.
+    # The io.sapl.attributes.postgres.host above always points at the
+    # docker-compose "postgres" host, regardless of which attribute storage
+    # backend is active. Outside that compose network (e.g. local dev with
+    # mongo/redis storage), the host does not resolve and drags the
+    # aggregate /actuator/ health status to DOWN even though liveness/
+    # readiness are fine.
     r2dbc:
       enabled: false
 

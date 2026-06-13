@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.ConnectionString;
 import com.mongodb.reactivestreams.client.MongoClients;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
@@ -33,8 +34,9 @@ import io.sapl.attributes.broker.repository.ReadableAttributeRepository;
 import io.sapl.attributes.broker.repository.RedisAttributeRepository;
 import io.sapl.attributes.libraries.UserPolicyInformationPoint;
 import io.sapl.pdp.PolicyDecisionPointBuilder;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.val;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -42,6 +44,8 @@ import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.List;
 
@@ -49,6 +53,7 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.*;
 
 @SuppressWarnings("unused")
 @Configuration
+@EnableConfigurationProperties(AttributeStorageProperties.class)
 public class AttributeConfiguration {
 
     @Bean
@@ -75,8 +80,13 @@ public class AttributeConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
-    public RedisClient redisClient(@Value("${spring.data.redis.url:redis://localhost:6379}") String uri) {
-        return RedisClient.create(uri);
+    public RedisClient redisClient(AttributeStorageProperties properties) {
+        val redis   = properties.getRedis();
+        val builder = RedisURI.Builder.redis(redis.getHost(), redis.getPort()).withDatabase(redis.getDatabase());
+        if (redis.getPassword() != null && !redis.getPassword().isBlank()) {
+            builder.withPassword(redis.getPassword().toCharArray());
+        }
+        return RedisClient.create(builder.build());
     }
 
     @Bean
@@ -100,10 +110,11 @@ public class AttributeConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public ConnectionFactory connectionFactory() {
+    public ConnectionFactory connectionFactory(AttributeStorageProperties properties) {
+        val postgres = properties.getPostgres();
         return ConnectionFactories.get(ConnectionFactoryOptions.builder().option(DRIVER, "postgresql")
-                .option(HOST, "localhost").option(PORT, 5432).option(USER, "sapl").option(PASSWORD, "secret")
-                .option(DATABASE, "sapl").build());
+                .option(HOST, postgres.getHost()).option(PORT, postgres.getPort()).option(USER, postgres.getUsername())
+                .option(PASSWORD, postgres.getPassword()).option(DATABASE, postgres.getDatabase()).build());
     }
 
     @Bean
@@ -115,8 +126,18 @@ public class AttributeConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public ReactiveMongoTemplate reactiveMongoTemplate(@Value("${spring.data.mongodb.uri}") String uri) {
-        ConnectionString cs = new ConnectionString(uri);
+    public ReactiveMongoTemplate reactiveMongoTemplate(AttributeStorageProperties properties) {
+        val mongo       = properties.getMongo();
+        val credentials = mongo.getUsername() == null || mongo.getUsername().isBlank() ? ""
+                : encode(mongo.getUsername()) + ":" + encode(mongo.getPassword()) + "@";
+        val authSource  = mongo.getUsername() == null || mongo.getUsername().isBlank() ? ""
+                : "?authSource=" + mongo.getAuthDatabase();
+        val cs          = new ConnectionString("mongodb://" + credentials + mongo.getHost() + ":" + mongo.getPort()
+                + "/" + mongo.getDatabase() + authSource);
         return new ReactiveMongoTemplate(MongoClients.create(cs), cs.getDatabase());
+    }
+
+    private static String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 }
