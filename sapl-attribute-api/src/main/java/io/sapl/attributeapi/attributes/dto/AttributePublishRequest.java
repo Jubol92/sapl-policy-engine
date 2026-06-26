@@ -28,6 +28,8 @@ import java.util.List;
 @Setter
 @NoArgsConstructor
 public class AttributePublishRequest {
+    private Long           ttl;           // optional, non set -> infinity
+    private String         pdpid;
     private JsonNode       value;         // required
     private List<JsonNode> arguments;     // optional
 }

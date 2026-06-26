@@ -33,7 +33,7 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
-public class RedisAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
+public class RedisAttributeRepository implements AttributeRepository {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String ERROR_CLOSED           = "Repository is closed.";
 
@@ -46,6 +46,10 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     private final StatefulRedisPubSubConnection<String, String> pubsub;
 
     private final Map<String, Set<Consumer<Value>>> observersByKey = new HashMap<>();
+
+    // todo: Replace/remove as soon it's clarified how to add the pdpId to the
+    // Repository
+    private final String pdpId = "default";
 
     private boolean closed = false;
 
@@ -132,14 +136,6 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
     }
 
     @Override
-    public Value get(@NonNull RepositoryKey key) {
-        var raw = cli.get(toRedisKey(key));
-
-        // return toValueFromRedisValue(raw);
-        return raw != null ? ValueJsonMarshaller.json(raw) : Value.UNDEFINED;
-    }
-
-    @Override
     public Registration observe(@NonNull AttributeFinderInvocation invocation, @NonNull Consumer<Value> onValue) {
         RepositoryKey key = new RepositoryKey(invocation.entity(), invocation.attributeName(), invocation.arguments());
 
@@ -155,7 +151,9 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
             } else {
                 // Register callback for future changes
                 observersByKey.computeIfAbsent(redisKey, k -> new HashSet<>()).add(onValue);
-                initial = get(key);
+                String raw = cli.get(redisKey);
+                initial = (raw == null || UNDEFINED_STRING.equals(raw)) ? Value.UNDEFINED
+                        : ValueJsonMarshaller.json(raw);
             }
         } finally {
             lock.unlock();
@@ -187,7 +185,7 @@ public class RedisAttributeRepository implements AttributeRepository, ReadableAt
         String entity    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : "null";
         String arguments = valuesToJson(key.arguments());
 
-        return "sapl:attribute:" + entity + ":" + key.name() + ":" + arguments;
+        return "sapl:attribute:" + pdpId + ":" + entity + ":" + key.name() + ":" + arguments;
     }
 
     private String valuesToJson(List<Value> values) {

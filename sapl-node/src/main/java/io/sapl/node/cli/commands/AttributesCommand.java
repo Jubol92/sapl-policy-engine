@@ -13,6 +13,7 @@ import java.util.concurrent.Callable;
 // Hint: Basis Command ohne eigene Optionen. Es dient nur zur Eingliederung der Subcommand damit es die Aufrufe
 // attributes publish, attributes get und attribute delete gibt
 // @formatter:on
+@SuppressWarnings("unused")
 public class AttributesCommand implements Callable<Integer> {
     @Spec
     CommandSpec spec;

@@ -51,7 +51,7 @@ import java.util.function.Consumer;
  * @since 4.1.0
  */
 @Slf4j
-public final class InMemoryAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
+public final class InMemoryAttributeRepository implements AttributeRepository {
 
     private static final String ERROR_CLOSED           = "Repository is closed.";
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
@@ -64,6 +64,14 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
     private final Map<RepositoryKey, Set<KeyObserver>> observersByKey = new HashMap<>();
 
     private boolean closed = false;
+
+    /**
+     * Monotonic per-mutation sequence, assigned under {@link #lock}. Observers
+     * fire outside the lock, so concurrent publishes for the same key can race
+     * in delivery order. Each observer uses this sequence to drop a delivery a
+     * newer mutation has already superseded, so the latest value always wins.
+     */
+    private long sequenceCounter = 0L;
 
     // Needed for delegate pattern
     private final Consumer<RepositoryKey> onExpiry;
@@ -97,6 +105,7 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
     @Override
     public void remove(@NonNull RepositoryKey key) {
         List<KeyObserver> toFire;
+        long              seq;
         lock.lock();
 
         try {
@@ -111,10 +120,11 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
                 prior.expiryTask.cancel(false);
             }
             toFire = observers(key);
+            seq    = ++sequenceCounter;
         } finally {
             lock.unlock();
         }
-        fireObservers(toFire, Value.UNDEFINED);
+        fireObservers(toFire, Value.UNDEFINED, seq);
     }
 
     @Override
@@ -123,22 +133,24 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
         val   repoKey  = RepositoryKey.fromInvocation(invocation);
         val   observer = new KeyObserver(repoKey, onValue);
         Value initial;
+        long  seqInit;
         lock.lock();
 
         try {
             if (closed) {
                 initial = Value.error(ERROR_CLOSED);
+                seqInit = sequenceCounter;
             } else {
                 observersByKey.computeIfAbsent(repoKey, k -> new HashSet<>()).add(observer);
                 val entry = entries.get(repoKey);
                 initial = entry != null ? entry.value : Value.UNDEFINED;
+                seqInit = sequenceCounter;
             }
         } finally {
-
             lock.unlock();
 
         }
-        observer.deliver(initial);
+        observer.deliver(initial, seqInit);
         return observer;
     }
 
@@ -177,6 +189,7 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
 
     private void publishInternal(RepositoryKey key, Value value, @Nullable Duration ttl) {
         List<KeyObserver> toFire;
+        long              seq;
         lock.lock();
 
         try {
@@ -194,16 +207,18 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
                         TimeUnit.MILLISECONDS);
             }
             toFire = observers(key);
+            seq    = ++sequenceCounter;
         } finally {
 
             lock.unlock();
 
         }
-        fireObservers(toFire, value);
+        fireObservers(toFire, value, seq);
     }
 
     private void expireKey(RepositoryKey key, Entry expectedEntry) {
         List<KeyObserver> toFire;
+        long              seq;
         lock.lock();
 
         try {
@@ -213,13 +228,14 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
             }
             entries.remove(key);
             toFire = observers(key);
+            seq    = ++sequenceCounter;
         } finally {
 
             lock.unlock();
 
         }
         onExpiry.accept(key); // new
-        fireObservers(toFire, Value.UNDEFINED);
+        fireObservers(toFire, Value.UNDEFINED, seq);
     }
 
     /** Caller holds the lock. */
@@ -228,21 +244,9 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
         return bucket == null ? List.of() : new ArrayList<>(bucket);
     }
 
-    private void fireObservers(List<KeyObserver> observers, Value value) {
+    private void fireObservers(List<KeyObserver> observers, Value value, long seq) {
         for (val observer : observers) {
-            observer.deliver(value);
-        }
-    }
-
-    // GET is needed for the Push API to read Attribute out of a policy context
-    @Override
-    public Value get(RepositoryKey key) {
-        lock.lock();
-        try {
-            val entry = entries.get(key);
-            return entry != null ? entry.value : Value.UNDEFINED;
-        } finally {
-            lock.unlock();
+            observer.deliver(value, seq);
         }
     }
 
@@ -271,15 +275,19 @@ public final class InMemoryAttributeRepository implements AttributeRepository, R
 
         private static final AtomicLong NEXT_ID = new AtomicLong(Long.MIN_VALUE);
 
-        private final long            id     = NEXT_ID.getAndIncrement();
+        private final long            id            = NEXT_ID.getAndIncrement();
         private final RepositoryKey   repositoryKey;
         private final Consumer<Value> onValue;
-        private volatile boolean      closed = false;
+        private volatile boolean      closed        = false;
+        private long                  lastDelivered = Long.MIN_VALUE;
 
-        void deliver(Value value) {
-            if (closed) {
+        synchronized void deliver(Value value, long seq) {
+            if (closed || seq <= lastDelivered) {
                 return;
             }
+            // Serialize and order deliveries so a delivery superseded by a newer
+            // mutation cannot win when observers fire outside the repository lock.
+            lastDelivered = seq;
             try {
                 onValue.accept(value);
             } catch (RuntimeException e) {

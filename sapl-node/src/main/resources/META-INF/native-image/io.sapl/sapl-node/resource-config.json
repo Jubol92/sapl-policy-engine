@@ -24,6 +24,9 @@
       },
       {
         "pattern": "META-INF/resources/webjars/scalar/.*"
+      },
+      {
+        "pattern": "\\Qorg/springframework/http/codec/CodecConfigurer.properties\\E"
       }
     ]
   }

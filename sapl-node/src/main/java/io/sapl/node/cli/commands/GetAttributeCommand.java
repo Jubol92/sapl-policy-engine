@@ -1,8 +1,9 @@
 package io.sapl.node.cli.commands;
 
-import io.sapl.attributes.storage.AttributeStorage;
+import org.springframework.web.util.UriComponentsBuilder;
 import picocli.CommandLine;
 import picocli.CommandLine.Mixin;
+
 import java.io.IOException;
 import java.util.List;
 
@@ -12,69 +13,28 @@ public class GetAttributeCommand extends BaseAttributeCommand {
     @Mixin
     FileMixin file;
 
-    @CommandLine.Option(names = "--entity", required = true, description = "The subject or resource the attribute belongs to")
+    @CommandLine.Option(names = "--entity", description = "The subject or resource the attribute belongs to (omit for global attributes)")
     String entity;
 
-    @CommandLine.Option(names = "--name", description = "The attribute name e.g. role or user.role")
+    @CommandLine.Option(names = "--name", required = true, description = "The attribute name e.g. role or user.role")
     String name;
 
-    // Hint: Wichtig, wenn man mehrere Parameter mit übergeben kann ein Separator zu
-    // haben
     @CommandLine.Option(names = "--arguments", description = "Comma-separated list of arguments", defaultValue = "", split = ",")
     List<String> arguments;
 
-    // Hint: Eine Idee. Zeige nicht nur die Attribute an, sondern auch die Attribute
-    // Keys. Es macht es manchmal einfacher
-    @CommandLine.Option(names = "--with-key", description = "Displays the stored key along with the value.")
-    Boolean showKey;
+    @CommandLine.Option(names = "--pdpid", description = "The id of the PDP the attribute is used for", defaultValue = "default")
+    String pdpId;
 
     @Override
     public Integer call() throws Exception {
-        return file.run(() -> {
-            if (storage.transport.url != null) {
-                return getViaApi();
-            }
-            return getViaProvider();
-        });
-    }
+        var uriBuilder = UriComponentsBuilder.fromUriString(url + attributePath(entity, name)).queryParam("pdpid",
+                pdpId);
+        arguments.stream().filter(s -> !s.isEmpty()).forEach(arg -> uriBuilder.queryParam("arg", arg));
 
-    // Hint: Alte anfängliche Implementierung für schnelle Tests - nicht ausgereift.
-    // Wird tendenziell eher entfernt. Noch klären!
-    private Integer getViaApi() throws IOException {
-        var response = webClient.get().uri(storage.transport.url + "/api/attributes/entity/" + entity).retrieve()
-                .toEntity(String.class).block();
+        var response = webClient.get().uri(uriBuilder.build().toUri()).retrieve().toEntity(String.class).block();
 
         print(response != null ? response.getBody() : "");
-        return response != null && response.getStatusCode().value() == 200 ? 0 : 1;
-    }
-
-    private Integer getViaProvider() {
-        try {
-            return getFromStorage(storage.createStorage());
-        } catch (IllegalArgumentException e) {
-            spec.commandLine().getErr().println(e.getMessage());
-            return 1;
-        }
-    }
-
-    // Hint: Hilfsmethoden buildKey(), parseArguments() werden über die abstrakte
-    // Klasse geladen, da mehrfache Verwendung in Subcommands
-    private Integer getFromStorage(AttributeStorage attributeStorage) {
-        try {
-            var args  = parseArguments(arguments);
-            var key   = buildKey(entity, name, args);
-            var entry = attributeStorage.findAll().get(key);
-
-            if (!Boolean.TRUE.equals(showKey)) {
-                print(entry != null ? entry.value().toString() : "Not found.");
-            } else {
-                print(entry != null ? key + " " + entry.value() : "Not found.");
-            }
-            return 0;
-        } catch (Exception ex) {
-            spec.commandLine().getErr().println("Failed to get attribute: " + ex.getMessage());
-            return 1;
-        }
+        return response != null && response.getStatusCode().is2xxSuccessful() ? 0 : 1;
     }
 
     private void print(String content) throws IOException {

@@ -35,15 +35,10 @@ import java.util.Date;
 import java.util.List;
 
 @SuppressWarnings("unused")
-public class MongoAttributeRepository implements AttributeRepository, ReadableAttributeRepository {
+public class MongoAttributeRepository implements AttributeRepository {
     // Delegate Pattern . observer(), close() etc are generated
     @Delegate(excludes = ExcludedMethods.class)
     private final InMemoryAttributeRepository internalRepository;
-
-    @Override
-    public Value get(RepositoryKey key) {
-        return internalRepository.get(key);
-    }
 
     private interface ExcludedMethods {
         void publish(RepositoryKey key, Value value);
@@ -55,6 +50,10 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
 
     private final ReactiveMongoTemplate mongo;
 
+    // todo: Replace/remove as soon it's clarified how to add the pdpId to the
+    // Repository
+    private final String pdpId = "default";
+
     public MongoAttributeRepository(ReactiveMongoTemplate mongo) {
         this.mongo              = mongo;
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
@@ -62,7 +61,8 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
     }
 
     public void loadFromDB() {
-        mongo.find(new Query(), Document.class, "attributes").toStream().forEach(doc -> {
+        var query = new Query(Criteria.where("pdpId").is(pdpId));
+        mongo.find(query, Document.class, "attributes").toStream().forEach(doc -> {
             var entityJson = doc.getString("entity");
             var argsJson   = doc.getString("arguments");
             var valueJson  = doc.getString("value");
@@ -111,8 +111,9 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
         var argsJson   = valuesToJson(key.arguments());
         var valueJson  = ValueJsonMarshaller.toJsonString(value);
 
-        var update = new Update().set("name", key.name()).set("entity", entityJson).set("arguments", argsJson)
-                .set("value", valueJson).set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
+        var update = new Update().set("pdpId", pdpId).set("name", key.name()).set("entity", entityJson)
+                .set("arguments", argsJson).set("value", valueJson)
+                .set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
 
         mongo.upsert(doMongoQuery(key), update, "attributes").block();
     }
@@ -126,8 +127,8 @@ public class MongoAttributeRepository implements AttributeRepository, ReadableAt
     private Query doMongoQuery(RepositoryKey key) {
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argsJson   = valuesToJson(key.arguments());
-        var criteria   = Criteria.where("name").is(key.name()).and("entity").is(entityJson).and("arguments")
-                .is(argsJson);
+        var criteria   = Criteria.where("pdpId").is(pdpId).and("name").is(key.name()).and("entity").is(entityJson)
+                .and("arguments").is(argsJson);
 
         return new Query(criteria);
     }

@@ -34,25 +34,24 @@ import java.util.NoSuchElementException;
 
 @Slf4j
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true", matchIfMissing = false)
+@ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 @RestController
 @RequestMapping("/api/attributes")
+@SuppressWarnings("unused")
 public class AttributeApiController {
     private final AttributeApiService service;
 
     @PostMapping("/{entity}/{name}")
     public Mono<ResponseEntity<Void>> publish(@PathVariable String entity, @PathVariable String name,
-            @RequestHeader(value = "ttl", defaultValue = "-1") long ttl, @RequestBody AttributePublishRequest request) {
-        return Mono.fromRunnable(() -> service.publish(entity, name, ttl, request))
-                .subscribeOn(Schedulers.boundedElastic())
+            @RequestBody AttributePublishRequest request) {
+        return Mono.fromRunnable(() -> service.publish(entity, name, request)).subscribeOn(Schedulers.boundedElastic())
                 .thenReturn(ResponseEntity.created(URI.create("/api/attributes/" + entity + "/" + name)).build());
     }
 
     @PostMapping("/{name}")
     public Mono<ResponseEntity<Void>> publishGlobalAttribute(@PathVariable String name,
-            @RequestHeader(value = "ttl", defaultValue = "-1") long ttl, @RequestBody AttributePublishRequest request) {
-        return Mono.fromRunnable(() -> service.publish(null, name, ttl, request))
-                .subscribeOn(Schedulers.boundedElastic())
+            @RequestBody AttributePublishRequest request) {
+        return Mono.fromRunnable(() -> service.publish(null, name, request)).subscribeOn(Schedulers.boundedElastic())
                 .thenReturn(ResponseEntity.created(URI.create("/api/attributes/" + name)).build());
     }
 

@@ -20,10 +20,10 @@ package io.sapl.attributeapi.attributes.service;
 import io.sapl.api.model.ErrorValue;
 import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
+import io.sapl.attributeapi.attributes.backend.AttributeSignature;
+import io.sapl.attributeapi.attributes.backend.AttributeStore;
 import io.sapl.attributeapi.attributes.dto.AttributePublishRequest;
 import io.sapl.attributeapi.attributes.dto.AttributeValueResponse;
-import io.sapl.attributes.broker.repository.ReadableAttributeRepository;
-import io.sapl.attributes.broker.repository.RepositoryKey;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -34,41 +34,38 @@ import java.util.NoSuchElementException;
 
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true", matchIfMissing = false)
+@ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 public class AttributeApiService {
-    private final ReadableAttributeRepository repository;
+    private final AttributeStore store;
 
-    public void publish(String entity, String attribute, long ttl, AttributePublishRequest body) {
-        List<Value> arguments = body.getArguments() == null ? List.of()
+    public void publish(String entity, String attribute, AttributePublishRequest body) {
+        List<Value> arguments   = body.getArguments() == null ? List.of()
                 : body.getArguments().stream().map(ValueJsonMarshaller::fromJsonNode).toList();
+        Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
+        Value       value       = ValueJsonMarshaller.fromJsonNode(body.getValue());
+        Long        ttl         = body.getTtl();
 
-        Value         entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
-        Value         value       = ValueJsonMarshaller.fromJsonNode(body.getValue());
-        RepositoryKey key         = new RepositoryKey(entityValue, attribute, arguments);
-
-        if (ttl <= 0) {
-            repository.publish(key, value);
+        var sig = new AttributeSignature(entityValue, attribute, arguments);
+        if (ttl == null || ttl <= 0) {
+            store.publish(sig, value);
         } else {
-            repository.publish(key, value, Duration.ofSeconds(ttl));
+            store.publish(sig, value, Duration.ofSeconds(ttl));
         }
     }
 
     public void delete(String entity, String attribute, List<String> rawArgs) {
-        List<Value> arguments = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
+        List<Value> arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
+        Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
 
-        Value         entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
-        RepositoryKey key         = new RepositoryKey(entityValue, attribute, arguments);
-
-        repository.remove(key);
+        store.remove(new AttributeSignature(entityValue, attribute, arguments));
     }
 
     public AttributeValueResponse get(String entity, String attribute, List<String> rawArgs) {
-        List<Value>   arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
-        Value         entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
-        RepositoryKey key         = new RepositoryKey(entityValue, attribute, arguments);
-        Value         value       = repository.get(key);
+        List<Value> arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
+        Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
+        Value       value       = store.get(new AttributeSignature(entityValue, attribute, arguments));
 
-        if (value == Value.UNDEFINED) // Value.UNDEFINED if key doesn't exist
+        if (value == Value.UNDEFINED)
             throw new NoSuchElementException();
 
         return new AttributeValueResponse(ValueJsonMarshaller.toJsonNodeLenient(value));

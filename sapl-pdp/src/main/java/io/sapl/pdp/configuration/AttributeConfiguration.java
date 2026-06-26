@@ -30,7 +30,6 @@ import io.sapl.attributes.broker.AttributeRepository;
 import io.sapl.attributes.broker.repository.InMemoryAttributeRepository;
 import io.sapl.attributes.broker.repository.MongoAttributeRepository;
 import io.sapl.attributes.broker.repository.PostgresAttributeRepository;
-import io.sapl.attributes.broker.repository.ReadableAttributeRepository;
 import io.sapl.attributes.broker.repository.RedisAttributeRepository;
 import io.sapl.attributes.libraries.UserPolicyInformationPoint;
 import io.sapl.pdp.PolicyDecisionPointBuilder;
@@ -59,22 +58,21 @@ public class AttributeConfiguration {
     @Bean
     @Primary
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "heap", matchIfMissing = true)
-    public ReadableAttributeRepository heapAttributeRepository() {
+    public AttributeRepository heapAttributeRepository() {
         return new InMemoryAttributeRepository();
     }
 
     @Bean
     @Primary
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public ReadableAttributeRepository postgresAttributeRepository(DatabaseClient client,
-            ConnectionFactory connection) {
+    public AttributeRepository postgresAttributeRepository(DatabaseClient client, ConnectionFactory connection) {
         return new PostgresAttributeRepository(client, connection);
     }
 
     @Bean
     @Primary
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public ReadableAttributeRepository mongoAttributeRepository(ReactiveMongoTemplate template) {
+    public AttributeRepository mongoAttributeRepository(ReactiveMongoTemplate template) {
         return new MongoAttributeRepository(template);
     }
 
@@ -92,7 +90,7 @@ public class AttributeConfiguration {
     @Bean
     @Primary
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
-    public ReadableAttributeRepository redisAttributeRepository(RedisClient client) {
+    public AttributeRepository redisAttributeRepository(RedisClient client) {
         return new RedisAttributeRepository(client);
     }
 
