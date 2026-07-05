@@ -20,11 +20,13 @@ package io.sapl.attributeapi.attributes.service;
 import io.sapl.api.model.ErrorValue;
 import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
-import io.sapl.attributeapi.attributes.backend.AttributeSignature;
+import io.sapl.attributeapi.attributes.backend.AttributeKey;
 import io.sapl.attributeapi.attributes.backend.AttributeStore;
 import io.sapl.attributeapi.attributes.dto.AttributePublishRequest;
-import io.sapl.attributeapi.attributes.dto.AttributeValueResponse;
+import io.sapl.attributeapi.auth.AttributeApiSecurityProperties;
+import tools.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -36,39 +38,45 @@ import java.util.NoSuchElementException;
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 public class AttributeApiService {
-    private final AttributeStore store;
+    private final AttributeStore                 store;
+    private final AttributeApiSecurityProperties securityProperties;
 
-    public void publish(String entity, String attribute, AttributePublishRequest body) {
+    public void publish(String entity, String attribute, AttributePublishRequest body, @Nullable String tenantId) {
         List<Value> arguments   = body.getArguments() == null ? List.of()
                 : body.getArguments().stream().map(ValueJsonMarshaller::fromJsonNode).toList();
         Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
         Value       value       = ValueJsonMarshaller.fromJsonNode(body.getValue());
         Long        ttl         = body.getTtl();
 
-        var sig = new AttributeSignature(entityValue, attribute, arguments);
+        var sig = new AttributeKey(entityValue, attribute, arguments);
         if (ttl == null || ttl <= 0) {
-            store.publish(sig, value);
+            store.publish(sig, value, resolveTenantId(tenantId));
         } else {
-            store.publish(sig, value, Duration.ofSeconds(ttl));
+            store.publish(sig, value, Duration.ofSeconds(ttl), resolveTenantId(tenantId));
         }
     }
 
-    public void delete(String entity, String attribute, List<String> rawArgs) {
+    public void delete(String entity, String attribute, List<String> rawArgs, @Nullable String tenantId) {
         List<Value> arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
         Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
 
-        store.remove(new AttributeSignature(entityValue, attribute, arguments));
+        store.remove(new AttributeKey(entityValue, attribute, arguments), resolveTenantId(tenantId));
     }
 
-    public AttributeValueResponse get(String entity, String attribute, List<String> rawArgs) {
+    public JsonNode get(String entity, String attribute, List<String> rawArgs, @Nullable String tenantId) {
         List<Value> arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
         Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
-        Value       value       = store.get(new AttributeSignature(entityValue, attribute, arguments));
+        Value       value       = store.get(new AttributeKey(entityValue, attribute, arguments),
+                resolveTenantId(tenantId));
 
         if (value == Value.UNDEFINED)
             throw new NoSuchElementException();
 
-        return new AttributeValueResponse(ValueJsonMarshaller.toJsonNodeLenient(value));
+        return ValueJsonMarshaller.toJsonNodeLenient(value);
+    }
+
+    private String resolveTenantId(@Nullable String tenantId) {
+        return tenantId == null || tenantId.isBlank() ? securityProperties.getDefaultTenantId() : tenantId;
     }
 
     // Converts a query-parameter string into a SAPL value.

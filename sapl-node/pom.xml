@@ -77,12 +77,6 @@
 			<groupId>io.sapl</groupId>
 			<artifactId>sapl-pdp</artifactId>
 			<version>${project.version}</version>
-			<exclusions>
-				<exclusion>
-					<groupId>tools.jackson.dataformat</groupId>
-					<artifactId>jackson-dataformat-xml</artifactId>
-				</exclusion>
-			</exclusions>
 		</dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>

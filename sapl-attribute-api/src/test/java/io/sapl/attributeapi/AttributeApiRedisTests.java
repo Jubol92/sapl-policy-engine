@@ -29,7 +29,8 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "io.sapl.attribute-api.enabled=true")
+@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "io.sapl.attribute-api.enabled=true", "io.sapl.attribute-api.allow-no-auth=true" })
 @Testcontainers
 @Import(AttributeApiRedisTests.Config.class)
 class AttributeApiRedisTests extends AbstractAttributeApiTests {

@@ -18,12 +18,16 @@
 package io.sapl.attributeapi.attributes.controller;
 
 import io.sapl.attributeapi.attributes.dto.AttributePublishRequest;
-import io.sapl.attributeapi.attributes.dto.AttributeValueResponse;
 import io.sapl.attributeapi.attributes.service.AttributeApiService;
+import io.sapl.attributeapi.auth.AttributeApiUserDetails;
+import tools.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.ReactiveSecurityContextHolder;
+import org.springframework.security.core.context.SecurityContext;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -39,19 +43,25 @@ import java.util.NoSuchElementException;
 @RequestMapping("/api/attributes")
 @SuppressWarnings("unused")
 public class AttributeApiController {
+    private static final String NO_TENANT_ID = "";
+
     private final AttributeApiService service;
 
     @PostMapping("/{entity}/{name}")
     public Mono<ResponseEntity<Void>> publish(@PathVariable String entity, @PathVariable String name,
             @RequestBody AttributePublishRequest request) {
-        return Mono.fromRunnable(() -> service.publish(entity, name, request)).subscribeOn(Schedulers.boundedElastic())
+        return currentTenantId()
+                .flatMap(tenantId -> Mono.fromRunnable(() -> service.publish(entity, name, request, tenantId))
+                        .subscribeOn(Schedulers.boundedElastic()))
                 .thenReturn(ResponseEntity.created(URI.create("/api/attributes/" + entity + "/" + name)).build());
     }
 
     @PostMapping("/{name}")
     public Mono<ResponseEntity<Void>> publishGlobalAttribute(@PathVariable String name,
             @RequestBody AttributePublishRequest request) {
-        return Mono.fromRunnable(() -> service.publish(null, name, request)).subscribeOn(Schedulers.boundedElastic())
+        return currentTenantId()
+                .flatMap(tenantId -> Mono.fromRunnable(() -> service.publish(null, name, request, tenantId))
+                        .subscribeOn(Schedulers.boundedElastic()))
                 .thenReturn(ResponseEntity.created(URI.create("/api/attributes/" + name)).build());
     }
 
@@ -63,29 +73,31 @@ public class AttributeApiController {
     @DeleteMapping("/{entity}/{name}")
     public Mono<ResponseEntity<Void>> deleteAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return Mono.fromRunnable(() -> service.delete(entity, name, args)).subscribeOn(Schedulers.boundedElastic())
+        return currentTenantId()
+                .flatMap(tenantId -> Mono.fromRunnable(() -> service.delete(entity, name, args, tenantId))
+                        .subscribeOn(Schedulers.boundedElastic()))
                 .thenReturn(ResponseEntity.noContent().build());
     }
 
     @DeleteMapping("/{name}")
     public Mono<ResponseEntity<Void>> deleteGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return Mono.fromRunnable(() -> service.delete(null, name, args)).subscribeOn(Schedulers.boundedElastic())
-                .thenReturn(ResponseEntity.noContent().build());
+        return currentTenantId().flatMap(tenantId -> Mono.fromRunnable(() -> service.delete(null, name, args, tenantId))
+                .subscribeOn(Schedulers.boundedElastic())).thenReturn(ResponseEntity.noContent().build());
     }
 
     @GetMapping("/{entity}/{name}")
-    public Mono<ResponseEntity<AttributeValueResponse>> getAttribute(@PathVariable String entity,
-            @PathVariable String name, @RequestParam(value = "arg", required = false) List<String> args) {
-        return Mono.fromCallable(() -> service.get(entity, name, args)).subscribeOn(Schedulers.boundedElastic())
-                .map(ResponseEntity::ok);
+    public Mono<ResponseEntity<JsonNode>> getAttribute(@PathVariable String entity, @PathVariable String name,
+            @RequestParam(value = "arg", required = false) List<String> args) {
+        return currentTenantId().flatMap(tenantId -> Mono.fromCallable(() -> service.get(entity, name, args, tenantId))
+                .subscribeOn(Schedulers.boundedElastic())).map(ResponseEntity::ok);
     }
 
     @GetMapping("/{name}")
-    public Mono<ResponseEntity<AttributeValueResponse>> getGlobalAttribute(@PathVariable String name,
+    public Mono<ResponseEntity<JsonNode>> getGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return Mono.fromCallable(() -> service.get(null, name, args)).subscribeOn(Schedulers.boundedElastic())
-                .map(ResponseEntity::ok);
+        return currentTenantId().flatMap(tenantId -> Mono.fromCallable(() -> service.get(null, name, args, tenantId))
+                .subscribeOn(Schedulers.boundedElastic())).map(ResponseEntity::ok);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -97,5 +109,15 @@ public class AttributeApiController {
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<Void> handleNotFound(NoSuchElementException e) {
         return ResponseEntity.notFound().build();
+    }
+
+    // Resolves the tenantId of the authenticated principal. Falls back to
+    // NO_TENANT_ID (which AttributeApiService treats the same as null) when
+    // no AttributeApiUserDetails is present, e.g. in no-auth mode.
+    private Mono<String> currentTenantId() {
+        return ReactiveSecurityContextHolder.getContext().map(SecurityContext::getAuthentication)
+                .map(Authentication::getPrincipal).filter(AttributeApiUserDetails.class::isInstance)
+                .cast(AttributeApiUserDetails.class).mapNotNull(AttributeApiUserDetails::getTenantId)
+                .defaultIfEmpty(NO_TENANT_ID);
     }
 }

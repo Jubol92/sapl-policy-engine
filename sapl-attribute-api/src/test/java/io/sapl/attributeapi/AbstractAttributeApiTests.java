@@ -87,7 +87,7 @@ abstract class AbstractAttributeApiTests {
                 """).exchange().expectStatus().isCreated();
 
         webClient.get().uri("/api/attributes/sapl.test.deletion").exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.value").isEqualTo("test_4");
+                .jsonPath("$").isEqualTo("test_4");
     }
 
     @Test
@@ -101,7 +101,7 @@ abstract class AbstractAttributeApiTests {
                         """).exchange().expectStatus().isCreated();
 
         webClient.get().uri("/api/attributes/sapl.test/sapl.test.publishAndDelete").exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.value").isEqualTo("test_5");
+                .expectBody().jsonPath("$").isEqualTo("test_5");
 
         webClient.delete().uri("/api/attributes/sapl.test/sapl.test.publishAndDelete").exchange().expectStatus()
                 .isNoContent();

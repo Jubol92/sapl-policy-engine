@@ -26,7 +26,6 @@ import java.util.List;
 import io.sapl.api.model.ValueJsonMarshaller;
 import lombok.NonNull;
 import org.jspecify.annotations.Nullable;
-import java.util.*;
 
 @SuppressWarnings("unused")
 public class RedisAttributeStore implements AttributeStore {
@@ -37,10 +36,6 @@ public class RedisAttributeStore implements AttributeStore {
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String>           cli;
 
-    // todo: Replace/remove as soon it's clarified how to add the pdpId to the
-    // Repository
-    private final String pdpId = "default";
-
     public RedisAttributeStore(RedisClient client) {
         this.client     = client;
         this.connection = client.connect();
@@ -48,20 +43,21 @@ public class RedisAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void publish(AttributeSignature signature, Value value) {
-        publishInternal(signature, value, null);
+    public void publish(AttributeKey signature, Value value, @Nullable String tenantId) {
+        publishInternal(signature, value, null, tenantId);
     }
 
     @Override
-    public void publish(AttributeSignature signature, Value value, Duration ttl) {
+    public void publish(AttributeKey signature, Value value, Duration ttl, @Nullable String tenantId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
-        publishInternal(signature, value, ttl);
+        publishInternal(signature, value, ttl, tenantId);
     }
 
-    private void publishInternal(AttributeSignature signature, @NonNull Value value, @Nullable Duration ttl) {
-        String redisKey   = toRedisKey(signature);
+    private void publishInternal(AttributeKey signature, @NonNull Value value, @Nullable Duration ttl,
+            String tenantId) {
+        String redisKey   = toRedisKey(signature, tenantId);
         String redisValue = ValueJsonMarshaller.toJsonString(value);
 
         if (ttl == null) {
@@ -73,15 +69,15 @@ public class RedisAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void remove(AttributeSignature signature) {
-        String redisKey = toRedisKey(signature);
+    public void remove(AttributeKey signature, @Nullable String tenantId) {
+        String redisKey = toRedisKey(signature, tenantId);
         cli.del(redisKey);
         cli.publish("sapl:changes:" + redisKey, UNDEFINED_STRING);
     }
 
     @Override
-    public Value get(AttributeSignature signature) {
-        var raw = cli.get(toRedisKey(signature));
+    public Value get(AttributeKey signature, @Nullable String tenantId) {
+        var raw = cli.get(toRedisKey(signature, tenantId));
 
         return raw != null ? ValueJsonMarshaller.json(raw) : Value.UNDEFINED;
     }
@@ -92,11 +88,11 @@ public class RedisAttributeStore implements AttributeStore {
         client.close();
     }
 
-    private String toRedisKey(AttributeSignature signature) {
+    private String toRedisKey(AttributeKey signature, String tenantId) {
         String entity    = signature.entity() != null ? ValueJsonMarshaller.toJsonString(signature.entity()) : "null";
         String arguments = valuesToJson(signature.arguments());
 
-        return "sapl:attribute:" + pdpId + ":" + entity + ":" + signature.name() + ":" + arguments;
+        return "sapl:attribute:" + tenantId + ":" + entity + ":" + signature.name() + ":" + arguments;
     }
 
     private String valuesToJson(List<Value> values) {

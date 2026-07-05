@@ -17,11 +17,13 @@
  */
 package io.sapl.attributeapi.attributes.backend;
 
+import io.sapl.api.model.ObjectValue;
 import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
-import org.springframework.r2dbc.core.DatabaseClient;
 import lombok.NonNull;
 import org.jspecify.annotations.Nullable;
+import org.springframework.r2dbc.core.DatabaseClient;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -33,41 +35,37 @@ public class PostgresAttributeStore implements AttributeStore {
 
     private final DatabaseClient client;
 
-    // todo: Replace/remove as soon it's clarified how to add the pdpId to the
-    // Repository
-    private final String pdpId = "default";
-
     public PostgresAttributeStore(DatabaseClient client) {
         this.client = client;
     }
 
     @Override
-    public void publish(AttributeSignature key, Value value) {
-        upsertToDB(key, value, null);
+    public void publish(AttributeKey key, Value value, @Nullable String tenantId) {
+        upsertToDB(key, value, null, tenantId);
     }
 
     @Override
-    public void publish(AttributeSignature key, Value value, Duration ttl) {
+    public void publish(AttributeKey key, Value value, Duration ttl, @Nullable String tenantId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
-        upsertToDB(key, value, Instant.now().plus(ttl));
+        upsertToDB(key, value, Instant.now().plus(ttl), tenantId);
     }
 
     @Override
-    public void remove(AttributeSignature key) {
-        deleteFromDB(key);
+    public void remove(AttributeKey key, @Nullable String tenantId) {
+        deleteFromDB(key, tenantId);
     }
 
     @Override
-    public Value get(AttributeSignature key) {
+    public Value get(AttributeKey key, @Nullable String tenantId) {
         var entityJson    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argumentsJson = valuesToJson(key.arguments());
 
-        var spec = client.sql("SELECT value FROM attributes WHERE pdp_id = :pdpId AND name = :name "
+        var spec = client.sql("SELECT value FROM attributes WHERE tenant_id = :tenantId AND name = :name "
                 + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
                 + "AND arguments = CAST(:arguments AS jsonb) " + "AND (expires_at IS NULL OR expires_at > NOW())")
-                .bind("pdpId", pdpId).bind("name", key.name()).bind("arguments", argumentsJson);
+                .bind("tenantId", tenantId).bind("name", key.name()).bind("arguments", argumentsJson);
 
         return (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class)).map(r -> {
             String raw = r.get("value", String.class);
@@ -79,7 +77,14 @@ public class PostgresAttributeStore implements AttributeStore {
     public void close() {
     }
 
-    private void upsertToDB(@NonNull AttributeSignature key, Value value, @Nullable Instant expiresAt) {
+    private void notifyPdp(@NonNull AttributeKey key, String tenantId) {
+        var payload = ValueJsonMarshaller.toJsonString(ObjectValue.builder().put("tenantId", Value.of(tenantId))
+                .put("name", Value.of(key.name())).put("entity", key.entity() != null ? key.entity() : Value.NULL)
+                .put("arguments", Value.ofArray(key.arguments())).build());
+        client.sql("SELECT pg_notify('attribute_changes', :payload)").bind("payload", payload).then().block();
+    }
+
+    private void upsertToDB(@NonNull AttributeKey key, Value value, @Nullable Instant expiresAt, String tenantId) {
         var entityJson    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argumentsJson = valuesToJson(key.arguments());
         var valueJson     = ValueJsonMarshaller.toJsonString(value);
@@ -87,16 +92,16 @@ public class PostgresAttributeStore implements AttributeStore {
         // ON CONFLICT triggers the unique constraint in the db if the value already
         // exists
         // Indexes:
-        // "attributes_pdp_id_name_entity_arguments_key" UNIQUE CONSTRAINT, btree
-        // (pdp_id, name, entity, arguments) NULLS NOT DISTINCT
+        // "attributes_tenant_id_name_entity_arguments_key" UNIQUE CONSTRAINT, btree
+        // (tenant_id, name, entity, arguments) NULLS NOT DISTINCT
         // DO UPDATE executes an update statement instead. This logic implements a real
         // upsert and an atomic execution
         // The atomic execution is important to have the same Decision if a multi node
         // setup is used
-        var upsertSpec = client.sql("INSERT INTO attributes (pdp_id, name, entity, arguments, value, expires_at) "
-                + "VALUES (:pdpId, :name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt) "
-                + "ON CONFLICT (pdp_id, name, entity, arguments) "
-                + "DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at").bind("pdpId", pdpId)
+        var upsertSpec = client.sql("INSERT INTO attributes (tenant_id, name, entity, arguments, value, expires_at) "
+                + "VALUES (:tenantId, :name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt) "
+                + "ON CONFLICT (tenant_id, name, entity, arguments) "
+                + "DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at").bind("tenantId", tenantId)
                 .bind("name", key.name()).bind("arguments", argumentsJson).bind("value", valueJson);
 
         upsertSpec = expiresAt != null ? upsertSpec.bind("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
@@ -104,18 +109,20 @@ public class PostgresAttributeStore implements AttributeStore {
 
         (entityJson != null ? upsertSpec.bind("entity", entityJson) : upsertSpec.bindNull("entity", String.class))
                 .then().block();
+        notifyPdp(key, tenantId);
     }
 
-    private void deleteFromDB(@NonNull AttributeSignature key) {
+    private void deleteFromDB(@NonNull AttributeKey key, String tenantId) {
         var entityJson    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argumentsJson = valuesToJson(key.arguments());
 
         var spec = client
-                .sql("DELETE FROM attributes " + "WHERE pdp_id = :pdpId AND name = :name "
+                .sql("DELETE FROM attributes " + "WHERE tenant_id = :tenantId AND name = :name "
                         + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
                         + "AND arguments = CAST(:arguments AS jsonb)")
-                .bind("pdpId", pdpId).bind("name", key.name()).bind("arguments", argumentsJson);
+                .bind("tenantId", tenantId).bind("name", key.name()).bind("arguments", argumentsJson);
         (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class)).then().block();
+        notifyPdp(key, tenantId);
     }
 
     private static String valuesToJson(List<Value> values) {

@@ -29,10 +29,11 @@ import io.sapl.attributeapi.attributes.backend.MongoAttributeStore;
 import io.sapl.attributeapi.attributes.backend.PostgresAttributeStore;
 import io.sapl.attributeapi.attributes.backend.RedisAttributeStore;
 import lombok.val;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 
@@ -43,32 +44,34 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.*;
 
 @Configuration
 @EnableConfigurationProperties(AttributeStorageProperties.class)
+@ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 public class AttributeStoreConfiguration {
 
-    @Bean
+    @Bean("attributeApiConnectionFactory")
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public ConnectionFactory connectionFactory(AttributeStorageProperties properties) {
+    public ConnectionFactory attributeApiConnectionFactory(AttributeStorageProperties properties) {
         val p = properties.getPostgres();
         return ConnectionFactories.get(ConnectionFactoryOptions.builder().option(DRIVER, "postgresql")
                 .option(HOST, p.getHost()).option(PORT, p.getPort()).option(USER, p.getUsername())
                 .option(PASSWORD, p.getPassword()).option(DATABASE, p.getDatabase()).build());
     }
 
-    @Bean
+    @Bean("attributeApiDatabaseClient")
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public DatabaseClient databaseClient(ConnectionFactory connectionFactory) {
+    public DatabaseClient attributeApiDatabaseClient(
+            @Qualifier("attributeApiConnectionFactory") ConnectionFactory connectionFactory) {
         return DatabaseClient.create(connectionFactory);
     }
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public AttributeStore postgresAttributeStore(DatabaseClient client) {
+    public AttributeStore postgresAttributeStore(@Qualifier("attributeApiDatabaseClient") DatabaseClient client) {
         return new PostgresAttributeStore(client);
     }
 
-    @Bean
+    @Bean("attributeApiMongoTemplate")
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public ReactiveMongoTemplate reactiveMongoTemplate(AttributeStorageProperties properties) {
+    public ReactiveMongoTemplate attributeApiMongoTemplate(AttributeStorageProperties properties) {
         val m           = properties.getMongo();
         val credentials = m.getUsername() == null || m.getUsername().isBlank() ? ""
                 : encode(m.getUsername()) + ":" + encode(m.getPassword()) + "@";
@@ -81,13 +84,13 @@ public class AttributeStoreConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public AttributeStore mongoAttributeStore(ReactiveMongoTemplate template) {
+    public AttributeStore mongoAttributeStore(@Qualifier("attributeApiMongoTemplate") ReactiveMongoTemplate template) {
         return new MongoAttributeStore(template);
     }
 
-    @Bean
+    @Bean("attributeApiRedisClient")
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
-    public RedisClient redisClient(AttributeStorageProperties properties) {
+    public RedisClient attributeApiRedisClient(AttributeStorageProperties properties) {
         val r       = properties.getRedis();
         val builder = RedisURI.Builder.redis(r.getHost(), r.getPort()).withDatabase(r.getDatabase());
         if (r.getPassword() != null && !r.getPassword().isBlank()) {
@@ -98,7 +101,7 @@ public class AttributeStoreConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
-    public AttributeStore redisAttributeStore(RedisClient client) {
+    public AttributeStore redisAttributeStore(@Qualifier("attributeApiRedisClient") RedisClient client) {
         return new RedisAttributeStore(client);
     }
 

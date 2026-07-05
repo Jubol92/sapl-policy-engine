@@ -49,7 +49,7 @@ class MongoAttributeRepositoryTests {
     void setUp() {
         val client   = MongoClients.create(mongo.getConnectionString());
         val template = new ReactiveMongoTemplate(new SimpleReactiveMongoDatabaseFactory(client, "sapl"));
-        repository = new MongoAttributeRepository(template);
+        repository = new MongoAttributeRepository(template, "test-tenant");
         received.clear();
     }
 
@@ -88,7 +88,7 @@ class MongoAttributeRepositoryTests {
 
             val client2   = MongoClients.create(mongo.getConnectionString());
             val template2 = new ReactiveMongoTemplate(new SimpleReactiveMongoDatabaseFactory(client2, "sapl"));
-            try (val repo2 = new MongoAttributeRepository(template2)) {
+            try (val repo2 = new MongoAttributeRepository(template2, "test-tenant-2")) {
                 repo2.observe(invocation("sapl.test.persist"), received::add);
                 assertThat(received.getFirst()).isEqualTo(Value.of(42L));
             }

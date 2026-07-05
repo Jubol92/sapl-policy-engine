@@ -18,16 +18,18 @@
 package io.sapl.attributeapi.attributes.backend;
 
 import io.sapl.api.model.Value;
+import org.jspecify.annotations.Nullable;
+
 import java.time.Duration;
 
 public interface AttributeStore {
-    void publish(AttributeSignature key, Value value);
+    void publish(AttributeKey key, Value value, @Nullable String tenantId);
 
-    void publish(AttributeSignature key, Value value, Duration ttl);
+    void publish(AttributeKey key, Value value, Duration ttl, @Nullable String tenantId);
 
-    void remove(AttributeSignature key);
+    void remove(AttributeKey key, @Nullable String tenantId);
 
-    Value get(AttributeSignature key);
+    Value get(AttributeKey key, @Nullable String tenantId);
 
     void close();
 }

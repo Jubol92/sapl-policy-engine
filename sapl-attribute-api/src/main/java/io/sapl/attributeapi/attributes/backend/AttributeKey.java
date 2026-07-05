@@ -24,8 +24,8 @@ import java.util.List;
 
 import static io.sapl.api.shared.NameValidator.requireValidName;
 
-public record AttributeSignature(@Nullable Value entity, @NonNull String name, @NonNull List<Value> arguments) {
-    public AttributeSignature {
+public record AttributeKey(@Nullable Value entity, @NonNull String name, @NonNull List<Value> arguments) {
+    public AttributeKey {
         requireValidName(name);
         arguments = List.copyOf(arguments);
     }

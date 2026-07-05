@@ -37,35 +37,31 @@ public class MongoAttributeStore implements AttributeStore {
 
     private final ReactiveMongoTemplate mongo;
 
-    // todo: Replace/remove as soon it's clarified how to add the pdpId to the
-    // Repository
-    private final String pdpId = "default";
-
     public MongoAttributeStore(ReactiveMongoTemplate mongo) {
         this.mongo = mongo;
     }
 
     @Override
-    public void publish(AttributeSignature key, Value value) {
-        upsertToDB(key, value, null);
+    public void publish(AttributeKey key, Value value, @Nullable String tenantId) {
+        upsertToDB(key, value, null, tenantId);
     }
 
     @Override
-    public void publish(AttributeSignature key, Value value, Duration ttl) {
+    public void publish(AttributeKey key, Value value, Duration ttl, @Nullable String tenantId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
-        upsertToDB(key, value, Instant.now().plus(ttl));
+        upsertToDB(key, value, Instant.now().plus(ttl), tenantId);
     }
 
     @Override
-    public void remove(AttributeSignature signature) {
-        deleteFromDB(signature);
+    public void remove(AttributeKey signature, @Nullable String tenantId) {
+        deleteFromDB(signature, tenantId);
     }
 
     @Override
-    public Value get(AttributeSignature key) {
-        var query = doMongoQuery(key);
+    public Value get(AttributeKey key, @Nullable String tenantId) {
+        var query = doMongoQuery(key, tenantId);
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
                 Criteria.where("expiresAt").gt(new Date())));
         var document = mongo.findOne(query, Document.class, "attributes").block();
@@ -80,26 +76,26 @@ public class MongoAttributeStore implements AttributeStore {
 
     }
 
-    private void deleteFromDB(@NonNull AttributeSignature key) {
-        mongo.remove(doMongoQuery(key), "attributes").block();
+    private void deleteFromDB(@NonNull AttributeKey key, String tenantId) {
+        mongo.remove(doMongoQuery(key, tenantId), "attributes").block();
     }
 
-    private void upsertToDB(@NonNull AttributeSignature key, Value value, @Nullable Instant expiresAt) {
+    private void upsertToDB(@NonNull AttributeKey key, Value value, @Nullable Instant expiresAt, String tenantId) {
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argsJson   = valuesToJson(key.arguments());
         var valueJson  = ValueJsonMarshaller.toJsonString(value);
 
-        var update = new Update().set("pdpId", pdpId).set("name", key.name()).set("entity", entityJson)
+        var update = new Update().set("tenantId", tenantId).set("name", key.name()).set("entity", entityJson)
                 .set("arguments", argsJson).set("value", valueJson)
                 .set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
 
-        mongo.upsert(doMongoQuery(key), update, "attributes").block();
+        mongo.upsert(doMongoQuery(key, tenantId), update, "attributes").block();
     }
 
-    private Query doMongoQuery(AttributeSignature key) {
+    private Query doMongoQuery(AttributeKey key, String tenantId) {
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argsJson   = valuesToJson(key.arguments());
-        var criteria   = Criteria.where("pdpId").is(pdpId).and("name").is(key.name()).and("entity").is(entityJson)
+        var criteria   = Criteria.where("tenantId").is(tenantId).and("name").is(key.name()).and("entity").is(entityJson)
                 .and("arguments").is(argsJson);
 
         return new Query(criteria);

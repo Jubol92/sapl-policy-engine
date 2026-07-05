@@ -15,20 +15,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributeapi.attributes.dto;
+package io.sapl.attributeapi.auth;
 
 import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-import tools.jackson.databind.JsonNode;
+import org.jspecify.annotations.NullMarked;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
 
+import java.util.Collection;
 import java.util.List;
 
 @Getter
-@Setter
-@NoArgsConstructor
-public class AttributePublishRequest {
-    private Long           ttl;           // optional, non set -> infinity
-    private JsonNode       value;         // required
-    private List<JsonNode> arguments;     // optional
+public class AttributeApiUserDetails implements UserDetails {
+
+    private final String username;
+    private final String password;
+    private final String tenantId;
+
+    public AttributeApiUserDetails(String username, String password, String tenantId) {
+        this.username = username;
+        this.password = password;
+        this.tenantId = tenantId;
+    }
+
+    @Override
+    @NullMarked
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return List.of();
+    }
 }

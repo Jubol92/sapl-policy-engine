@@ -68,7 +68,7 @@ class PostgresAttributeRepositoryTests {
         val connectionFactory = new PostgresqlConnectionFactory(config);
         client = DatabaseClient.create(connectionFactory);
         client.sql(CREATE_TABLE).then().block();
-        repository = new PostgresAttributeRepository(client, connectionFactory);
+        repository = new PostgresAttributeRepository(client, connectionFactory, "test-tenant");
         received.clear();
     }
 
@@ -113,7 +113,7 @@ class PostgresAttributeRepositoryTests {
             val factory2 = new PostgresqlConnectionFactory(config2);
             val client2  = DatabaseClient.create(factory2);
 
-            try (val repo2 = new PostgresAttributeRepository(client2, factory2)) {
+            try (val repo2 = new PostgresAttributeRepository(client2, factory2, "test-tenant-2")) {
                 repo2.observe(invocation("sapl.test.persist"), received::add);
                 assertThat(received.getFirst()).isEqualTo(Value.of(42L));
             }

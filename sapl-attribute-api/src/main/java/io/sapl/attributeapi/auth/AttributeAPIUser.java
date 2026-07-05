@@ -15,8 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributeapi.attributes.dto;
+package io.sapl.attributeapi.auth;
 
-import tools.jackson.databind.JsonNode;
-
-public record AttributeValueResponse(JsonNode value) {}
+@SuppressWarnings("unused")
+public record AttributeAPIUser(String id, String tenantId) {}

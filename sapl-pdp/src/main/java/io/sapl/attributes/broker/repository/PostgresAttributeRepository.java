@@ -51,14 +51,15 @@ public class PostgresAttributeRepository implements AttributeRepository {
 
     // todo: Replace/remove as soon it's clarified how to add the pdpId to the
     // Repository
-    private final String pdpId = "default";
+    private final String pdpId;
 
     private record DBEntry(String name, String entity, String arguments, String value, OffsetDateTime expiresAt) {}
 
     @SuppressWarnings("DataFlowIssue")
-    public PostgresAttributeRepository(DatabaseClient client, ConnectionFactory connection) {
-        this.client = client;
+    public PostgresAttributeRepository(DatabaseClient client, ConnectionFactory connection, String pdpId) {
 
+        this.client = client;
+        this.pdpId  = pdpId;
         // Connect to the right channel to receive changes
         this.connection = Mono.from(connection.create()).cast(PostgresqlConnection.class).block();
         Mono.from(Objects.requireNonNull(this.connection).createStatement("LISTEN attribute_changes").execute())

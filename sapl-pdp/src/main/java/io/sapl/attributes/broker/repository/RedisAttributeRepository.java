@@ -49,15 +49,16 @@ public class RedisAttributeRepository implements AttributeRepository {
 
     // todo: Replace/remove as soon it's clarified how to add the pdpId to the
     // Repository
-    private final String pdpId = "default";
+    private final String pdpId;
 
     private boolean closed = false;
 
-    public RedisAttributeRepository(RedisClient client) {
+    public RedisAttributeRepository(RedisClient client, String pdpId) {
         this.client     = client;
         this.connection = client.connect();
         this.pubsub     = client.connectPubSub();
         this.cli        = connection.sync();
+        this.pdpId      = pdpId;
 
         // Subscribe to needed channels
         pubsub.sync().psubscribe("sapl:changes:*");

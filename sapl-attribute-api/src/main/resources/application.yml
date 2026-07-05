@@ -2,5 +2,13 @@ server:
   port: 8090
 
 io.sapl:
+  attributes:
+    storage: redis
   attribute-api:
     enabled: true
+    allow-api-key-auth: true
+    users:
+      - id: app1
+        tenant-id: tenant-a
+        key:
+          hash: 370499c5f49386272a72df99a4b456d67703113b9ed8debc304ad5e0bb699963

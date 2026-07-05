@@ -163,7 +163,7 @@ io.sapl:
 
   pdp.embedded:
     enabled: true
-    pdp-config-type: DIRECTORY
+    pdp-config-type: MULTI_DIRECTORY
     config-path: /home/jubol92/.sapl/policies
     policies-path: /home/jubol92/.sapl/policies
     metrics-enabled: true

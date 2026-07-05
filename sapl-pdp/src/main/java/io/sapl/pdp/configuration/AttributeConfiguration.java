@@ -18,101 +18,222 @@
 package io.sapl.pdp.configuration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mongodb.ConnectionString;
-import com.mongodb.reactivestreams.client.MongoClients;
-import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
-import io.r2dbc.spi.ConnectionFactories;
-import io.r2dbc.spi.ConnectionFactory;
-import io.r2dbc.spi.ConnectionFactoryOptions;
+import io.sapl.api.attributes.AttributeFinderInvocation;
+import io.sapl.api.attributes.PolicyInformationPoint;
+import io.sapl.api.model.ObjectValue;
+import io.sapl.api.model.Value;
 import io.sapl.attributes.broker.AttributeBroker;
 import io.sapl.attributes.broker.AttributeRepository;
 import io.sapl.attributes.broker.repository.InMemoryAttributeRepository;
-import io.sapl.attributes.broker.repository.MongoAttributeRepository;
-import io.sapl.attributes.broker.repository.PostgresAttributeRepository;
-import io.sapl.attributes.broker.repository.RedisAttributeRepository;
+import io.sapl.attributes.broker.repository.RepositoryKey;
 import io.sapl.attributes.libraries.UserPolicyInformationPoint;
 import io.sapl.pdp.PolicyDecisionPointBuilder;
+import io.sapl.pdp.configuration.source.PDPConfigurationSource;
+import io.sapl.pdp.configuration.source.PDPConfigurationSource.ConfigurationEvent;
 import lombok.val;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.jspecify.annotations.NonNull;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
-import org.springframework.r2dbc.core.DatabaseClient;
 import tools.jackson.databind.json.JsonMapper;
-
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
-import java.util.List;
-
-import static io.r2dbc.spi.ConnectionFactoryOptions.*;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 @SuppressWarnings("unused")
 @Configuration
 @EnableConfigurationProperties(AttributeStorageProperties.class)
 public class AttributeConfiguration {
 
-    @Bean
-    @Primary
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "heap", matchIfMissing = true)
-    public AttributeRepository heapAttributeRepository() {
-        return new InMemoryAttributeRepository();
-    }
+    /*
+     * @Bean
+     *
+     * @Primary
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "heap", matchIfMissing = true)
+     * public AttributeRepository heapAttributeRepository() {
+     * return new InMemoryAttributeRepository();
+     * }
+     *
+     * @Bean
+     *
+     * @Primary
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "postgres")
+     * public AttributeRepository postgresAttributeRepository(DatabaseClient client,
+     * ConnectionFactory connection) {
+     * return new PostgresAttributeRepository(client, connection);
+     * }
+     *
+     * @Bean
+     *
+     * @Primary
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "mongo")
+     * public AttributeRepository mongoAttributeRepository(ReactiveMongoTemplate
+     * template) {
+     * return new MongoAttributeRepository(template);
+     * }
+     *
+     * @Bean
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "redis")
+     * public RedisClient redisClient(AttributeStorageProperties properties) {
+     * val redis = properties.getRedis();
+     * val builder = RedisURI.Builder.redis(redis.getHost(),
+     * redis.getPort()).withDatabase(redis.getDatabase());
+     * if (redis.getPassword() != null && !redis.getPassword().isBlank()) {
+     * builder.withPassword(redis.getPassword().toCharArray());
+     * }
+     * return RedisClient.create(builder.build());
+     * }
+     *
+     * @Bean
+     *
+     * @Primary
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "redis")
+     * public AttributeRepository redisAttributeRepository(RedisClient client) {
+     * return new RedisAttributeRepository(client);
+     * }
+     *
+     * @Bean
+     * public AttributeBroker attributeBroker(AttributeRepository repository) {
+     * return
+     * PolicyDecisionPointBuilder.buildPolicyInformationPointAttributeBroker(Clock.
+     * systemUTC(),
+     * JsonMapper.builder().build(), true, List.of(new
+     * UserPolicyInformationPoint()), repository);
+     * }
+     *
+     * @Bean
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "postgres")
+     * public DatabaseClient databaseClient(ConnectionFactory connectionFactory) {
+     * return DatabaseClient.create(connectionFactory);
+     * }
+     *
+     * @Bean
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "postgres")
+     * public ConnectionFactory connectionFactory(AttributeStorageProperties
+     * properties) {
+     * val postgres = properties.getPostgres();
+     * return
+     * ConnectionFactories.get(ConnectionFactoryOptions.builder().option(DRIVER,
+     * "postgresql")
+     * .option(HOST, postgres.getHost()).option(PORT,
+     * postgres.getPort()).option(USER, postgres.getUsername())
+     * .option(PASSWORD, postgres.getPassword()).option(DATABASE,
+     * postgres.getDatabase()).build());
+     * }
+     *
+     * @Bean
+     * public ObjectMapper objectMapper() {
+     * ObjectMapper mapper = new ObjectMapper();
+     * mapper.findAndRegisterModules();
+     * return mapper;
+     * }
+     *
+     * @Bean
+     *
+     * @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue =
+     * "mongo")
+     * public ReactiveMongoTemplate reactiveMongoTemplate(AttributeStorageProperties
+     * properties) {
+     * val mongo = properties.getMongo();
+     * val credentials = mongo.getUsername() == null ||
+     * mongo.getUsername().isBlank() ? ""
+     * : encode(mongo.getUsername()) + ":" + encode(mongo.getPassword()) + "@";
+     * val authSource = mongo.getUsername() == null || mongo.getUsername().isBlank()
+     * ? ""
+     * : "?authSource=" + mongo.getAuthDatabase();
+     * val cs = new ConnectionString("mongodb://" + credentials + mongo.getHost() +
+     * ":" + mongo.getPort()
+     * + "/" + mongo.getDatabase() + authSource);
+     * return new ReactiveMongoTemplate(MongoClients.create(cs), cs.getDatabase());
+     * }
+     *
+     * private static String encode(String value) {
+     * return URLEncoder.encode(value, StandardCharsets.UTF_8);
+     * }
+     */
 
     @Bean
     @Primary
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public AttributeRepository postgresAttributeRepository(DatabaseClient client, ConnectionFactory connection) {
-        return new PostgresAttributeRepository(client, connection);
+    @SuppressWarnings("resource")
+    public AttributeRepository attributeRepository(PDPConfigurationSource source) {
+        var cache       = new ConcurrentHashMap<String, AttributeRepository>(); // configId → repo
+        var pdpToConfig = new ConcurrentHashMap<String, String>();              // pdpId → current configId
+
+        source.subscribe(event -> {
+            if (event instanceof ConfigurationEvent.Load load) {
+                val pdpId    = load.configuration().pdpId();
+                val configId = load.configuration().configurationId();
+
+                val oldConfigId = pdpToConfig.put(pdpId, configId);
+                if (oldConfigId != null && !oldConfigId.equals(configId)) {
+                    Optional.ofNullable(cache.remove(oldConfigId)).ifPresent(AttributeRepository::close);
+                }
+
+                val repoNode = load.configuration().data().secrets().get("attributeRepository");
+                cache.computeIfAbsent(configId,
+                        k -> repoNode instanceof ObjectValue obj ? AttributeRepositoryFactory.create(obj, pdpId)
+                                : new InMemoryAttributeRepository());
+            } else if (event instanceof ConfigurationEvent.Remove(String pdpId)) {
+                val configId = pdpToConfig.remove(pdpId);
+                Optional.ofNullable(cache.remove(configId)).ifPresent(AttributeRepository::close);
+            }
+        });
+
+        return new AttributeRepository() {
+            @Override
+            public Registration observe(@NonNull AttributeFinderInvocation inv, @NonNull Consumer<Value> onValue) {
+                return cache.getOrDefault(inv.configurationId(), new InMemoryAttributeRepository()).observe(inv,
+                        onValue);
+            }
+
+            @Override
+            public void publish(@NonNull RepositoryKey k, @NonNull Value v) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void publish(@NonNull RepositoryKey k, @NonNull Value v, @NonNull Duration ttl) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void remove(@NonNull RepositoryKey k) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void close() {
+                cache.values().forEach(AttributeRepository::close);
+            }
+        };
     }
 
     @Bean
-    @Primary
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public AttributeRepository mongoAttributeRepository(ReactiveMongoTemplate template) {
-        return new MongoAttributeRepository(template);
-    }
-
-    @Bean
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
-    public RedisClient redisClient(AttributeStorageProperties properties) {
-        val redis   = properties.getRedis();
-        val builder = RedisURI.Builder.redis(redis.getHost(), redis.getPort()).withDatabase(redis.getDatabase());
-        if (redis.getPassword() != null && !redis.getPassword().isBlank()) {
-            builder.withPassword(redis.getPassword().toCharArray());
-        }
-        return RedisClient.create(builder.build());
-    }
-
-    @Bean
-    @Primary
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "redis")
-    public AttributeRepository redisAttributeRepository(RedisClient client) {
-        return new RedisAttributeRepository(client);
-    }
-
-    @Bean
-    public AttributeBroker attributeBroker(AttributeRepository repository) {
+    public AttributeBroker attributeBroker(AttributeRepository repository, ApplicationContext ctx) {
+        val pipBeans = Arrays.stream(ctx.getBeanNamesForAnnotation(PolicyInformationPoint.class)).map(ctx::getBean)
+                .collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
+        pipBeans.add(new UserPolicyInformationPoint());
         return PolicyDecisionPointBuilder.buildPolicyInformationPointAttributeBroker(Clock.systemUTC(),
-                JsonMapper.builder().build(), true, List.of(new UserPolicyInformationPoint()), repository);
-    }
-
-    @Bean
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public DatabaseClient databaseClient(ConnectionFactory connectionFactory) {
-        return DatabaseClient.create(connectionFactory);
-    }
-
-    @Bean
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "postgres")
-    public ConnectionFactory connectionFactory(AttributeStorageProperties properties) {
-        val postgres = properties.getPostgres();
-        return ConnectionFactories.get(ConnectionFactoryOptions.builder().option(DRIVER, "postgresql")
-                .option(HOST, postgres.getHost()).option(PORT, postgres.getPort()).option(USER, postgres.getUsername())
-                .option(PASSWORD, postgres.getPassword()).option(DATABASE, postgres.getDatabase()).build());
+                JsonMapper.builder().build(), true, pipBeans, repository);
     }
 
     @Bean
@@ -122,20 +243,4 @@ public class AttributeConfiguration {
         return mapper;
     }
 
-    @Bean
-    @ConditionalOnProperty(name = "io.sapl.attributes.storage", havingValue = "mongo")
-    public ReactiveMongoTemplate reactiveMongoTemplate(AttributeStorageProperties properties) {
-        val mongo       = properties.getMongo();
-        val credentials = mongo.getUsername() == null || mongo.getUsername().isBlank() ? ""
-                : encode(mongo.getUsername()) + ":" + encode(mongo.getPassword()) + "@";
-        val authSource  = mongo.getUsername() == null || mongo.getUsername().isBlank() ? ""
-                : "?authSource=" + mongo.getAuthDatabase();
-        val cs          = new ConnectionString("mongodb://" + credentials + mongo.getHost() + ":" + mongo.getPort()
-                + "/" + mongo.getDatabase() + authSource);
-        return new ReactiveMongoTemplate(MongoClients.create(cs), cs.getDatabase());
-    }
-
-    private static String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
-    }
 }

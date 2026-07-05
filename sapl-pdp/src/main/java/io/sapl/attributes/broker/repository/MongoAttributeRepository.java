@@ -29,6 +29,8 @@ import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import reactor.core.scheduler.Schedulers;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
@@ -52,12 +54,47 @@ public class MongoAttributeRepository implements AttributeRepository {
 
     // todo: Replace/remove as soon it's clarified how to add the pdpId to the
     // Repository
-    private final String pdpId = "default";
+    private final String pdpId;
 
-    public MongoAttributeRepository(ReactiveMongoTemplate mongo) {
+    public MongoAttributeRepository(ReactiveMongoTemplate mongo, String pdpId) {
         this.mongo              = mongo;
+        this.pdpId              = pdpId;
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
         loadFromDB();
+        subscribeToChangeStream();
+    }
+
+    // Requires MongoDB replica set (even a single-node rs works: --replSet rs0)
+    private void subscribeToChangeStream() {
+        mongo.changeStream(Document.class).watchCollection("attributes").listen()
+                .filter(event -> event.getBody() != null && pdpId.equals(event.getBody().getString("pdpId")))
+                .publishOn(Schedulers.boundedElastic()).subscribe(event -> {
+                    var doc = event.getBody();
+                    var opType = event.getOperationType();
+                    var entityJson = doc.getString("entity");
+                    var key = new RepositoryKey(entityJson != null ? ValueJsonMarshaller.json(entityJson) : null,
+                            doc.getString("name"), jsonToValues(doc.getString("arguments")));
+
+                    if (opType != null && "delete".equals(opType.getValue())) {
+                        internalRepository.remove(key);
+                        return;
+                    }
+
+                    var valueJson = doc.getString("value");
+                    if (valueJson == null)
+                        return;
+                    var value = ValueJsonMarshaller.json(valueJson);
+                    var dateField = doc.getDate("expiresAt");
+                    var expiresAt = dateField != null ? dateField.toInstant() : null;
+
+                    if (expiresAt != null) {
+                        var remaining = Duration.between(Instant.now(), expiresAt);
+                        if (!remaining.isNegative())
+                            internalRepository.publish(key, value, remaining);
+                    } else {
+                        internalRepository.publish(key, value);
+                    }
+                });
     }
 
     public void loadFromDB() {

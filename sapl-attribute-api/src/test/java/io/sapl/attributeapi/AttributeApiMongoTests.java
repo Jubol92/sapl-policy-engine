@@ -30,7 +30,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mongodb.MongoDBContainer;
 
-@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "io.sapl.attribute-api.enabled=true")
+@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "io.sapl.attribute-api.enabled=true", "io.sapl.attribute-api.allow-no-auth=true" })
 @Testcontainers
 @Import(AttributeApiMongoTests.Config.class)
 class AttributeApiMongoTests extends AbstractAttributeApiTests {

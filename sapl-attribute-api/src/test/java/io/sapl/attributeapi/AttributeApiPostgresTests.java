@@ -31,21 +31,22 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "io.sapl.attribute-api.enabled=true")
+@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "io.sapl.attribute-api.enabled=true", "io.sapl.attribute-api.allow-no-auth=true" })
 @Testcontainers
 @Import(AttributeApiPostgresTests.Config.class)
 class AttributeApiPostgresTests extends AbstractAttributeApiTests {
 
     private static final String CREATE_TABLE = """
             CREATE TABLE IF NOT EXISTS attributes (
-                pdp_id     TEXT        NOT NULL,
+                tenant_id  TEXT        NOT NULL,
                 name       TEXT        NOT NULL,
                 entity     JSONB,
                 arguments  JSONB       NOT NULL DEFAULT '[]',
                 value      JSONB       NOT NULL,
                 expires_at TIMESTAMPTZ,
-                CONSTRAINT attributes_pdp_id_name_entity_arguments_key
-                    UNIQUE NULLS NOT DISTINCT (pdp_id, name, entity, arguments)
+                CONSTRAINT attributes_tenant_id_name_entity_arguments_key
+                    UNIQUE NULLS NOT DISTINCT (tenant_id, name, entity, arguments)
             )
             """;
 
