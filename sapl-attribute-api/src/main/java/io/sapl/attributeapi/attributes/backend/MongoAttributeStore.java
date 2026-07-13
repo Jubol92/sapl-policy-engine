@@ -17,6 +17,7 @@
  */
 package io.sapl.attributeapi.attributes.backend;
 
+import io.sapl.api.model.ArrayValue;
 import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
 import lombok.NonNull;
@@ -30,10 +31,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 
 @SuppressWarnings("unused")
 public class MongoAttributeStore implements AttributeStore {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
+    private static final String ERROR_TENANT_IS_EMPTY  = "tenantId must be resolved before reaching the store";
 
     private final ReactiveMongoTemplate mongo;
 
@@ -42,12 +45,12 @@ public class MongoAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void publish(AttributeKey key, Value value, @Nullable String tenantId) {
+    public void publish(AttributeKey key, Value value, String tenantId) {
         upsertToDB(key, value, null, tenantId);
     }
 
     @Override
-    public void publish(AttributeKey key, Value value, Duration ttl, @Nullable String tenantId) {
+    public void publish(AttributeKey key, Value value, Duration ttl, String tenantId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
@@ -55,12 +58,12 @@ public class MongoAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void remove(AttributeKey signature, @Nullable String tenantId) {
+    public void remove(AttributeKey signature, String tenantId) {
         deleteFromDB(signature, tenantId);
     }
 
     @Override
-    public Value get(AttributeKey key, @Nullable String tenantId) {
+    public Value get(AttributeKey key, String tenantId) {
         var query = doMongoQuery(key, tenantId);
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
                 Criteria.where("expiresAt").gt(new Date())));
@@ -69,6 +72,18 @@ public class MongoAttributeStore implements AttributeStore {
             return Value.UNDEFINED;
         var valueJson = document.getString("value");
         return valueJson != null ? ValueJsonMarshaller.json(valueJson) : Value.UNDEFINED;
+    }
+
+    @Override
+    public List<AttributeEntry> getAll(String tenantId) {
+        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+
+        var query = new Query(Criteria.where("tenantId").is(tenantId));
+        query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
+                Criteria.where("expiresAt").gt(new Date())));
+
+        return mongo.find(query, Document.class, "attributes").map(MongoAttributeStore::mapDocument).collectList()
+                .block();
     }
 
     @Override
@@ -103,5 +118,20 @@ public class MongoAttributeStore implements AttributeStore {
 
     private static String valuesToJson(List<Value> values) {
         return ValueJsonMarshaller.toJsonString(Value.ofArray(values));
+    }
+
+    private static AttributeEntry mapDocument(Document document) {
+        String name         = document.getString("name");
+        String entityRaw    = document.getString("entity");
+        String argumentsRaw = document.getString("arguments");
+        String valueRaw     = document.getString("value");
+
+        Value       entity    = entityRaw != null ? ValueJsonMarshaller.json(entityRaw) : null;
+        List<Value> arguments = argumentsRaw != null && ValueJsonMarshaller.json(argumentsRaw) instanceof ArrayValue a
+                ? a
+                : List.of();
+        Value       value     = valueRaw != null ? ValueJsonMarshaller.json(valueRaw) : Value.UNDEFINED;
+
+        return new AttributeEntry(new AttributeKey(entity, name, arguments), value);
     }
 }

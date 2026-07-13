@@ -28,6 +28,7 @@ public class AttributeApiSecurityProperties {
     private boolean allowNoAuth;
     private boolean allowBasicAuth;
     private boolean allowApiKeyAuth;
+    private boolean allowOAuth2Auth;
 
     private String          defaultTenantId = "default";
     private List<UserEntry> users           = List.of();
@@ -49,5 +50,10 @@ public class AttributeApiSecurityProperties {
     @Data
     public static class ApiKey {
         private String hash;
+    }
+
+    @Data
+    public static class OAuth2 {
+        private String oidcTenantClaim;
     }
 }

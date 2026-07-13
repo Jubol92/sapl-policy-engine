@@ -17,6 +17,8 @@
  */
 package io.sapl.attributeapi.attributes.backend;
 
+import io.r2dbc.spi.Readable;
+import io.sapl.api.model.ArrayValue;
 import io.sapl.api.model.ObjectValue;
 import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
@@ -29,9 +31,11 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Objects;
 
 public class PostgresAttributeStore implements AttributeStore {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
+    private static final String ERROR_TENANT_IS_EMPTY  = "tenantId must be resolved before reaching the store";
 
     private final DatabaseClient client;
 
@@ -40,12 +44,12 @@ public class PostgresAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void publish(AttributeKey key, Value value, @Nullable String tenantId) {
+    public void publish(AttributeKey key, Value value, String tenantId) {
         upsertToDB(key, value, null, tenantId);
     }
 
     @Override
-    public void publish(AttributeKey key, Value value, Duration ttl, @Nullable String tenantId) {
+    public void publish(AttributeKey key, Value value, Duration ttl, String tenantId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
@@ -53,12 +57,14 @@ public class PostgresAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void remove(AttributeKey key, @Nullable String tenantId) {
+    public void remove(AttributeKey key, String tenantId) {
         deleteFromDB(key, tenantId);
     }
 
     @Override
-    public Value get(AttributeKey key, @Nullable String tenantId) {
+    public Value get(AttributeKey key, String tenantId) {
+        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+
         var entityJson    = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argumentsJson = valuesToJson(key.arguments());
 
@@ -71,6 +77,16 @@ public class PostgresAttributeStore implements AttributeStore {
             String raw = r.get("value", String.class);
             return raw != null ? ValueJsonMarshaller.json(raw) : Value.UNDEFINED;
         }).one().blockOptional().orElse(Value.UNDEFINED);
+    }
+
+    @Override
+    public List<AttributeEntry> getAll(String tenantId) {
+        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+
+        return client
+                .sql("SELECT name, entity, arguments, value FROM attributes WHERE tenant_id = :tenantId "
+                        + "AND (expires_at IS NULL OR expires_at > NOW())")
+                .bind("tenantId", tenantId).map(PostgresAttributeStore::mapRow).all().collectList().block();
     }
 
     @Override
@@ -127,6 +143,21 @@ public class PostgresAttributeStore implements AttributeStore {
 
     private static String valuesToJson(List<Value> values) {
         return ValueJsonMarshaller.toJsonString(Value.ofArray(values));
+    }
+
+    private static AttributeEntry mapRow(Readable row) {
+        String name         = row.get("name", String.class);
+        String entityRaw    = row.get("entity", String.class);
+        String argumentsRaw = row.get("arguments", String.class);
+        String valueRaw     = row.get("value", String.class);
+
+        Value       entity    = entityRaw != null ? ValueJsonMarshaller.json(entityRaw) : null;
+        List<Value> arguments = argumentsRaw != null && ValueJsonMarshaller.json(argumentsRaw) instanceof ArrayValue a
+                ? a
+                : List.of();
+        Value       value     = valueRaw != null ? ValueJsonMarshaller.json(valueRaw) : Value.UNDEFINED;
+
+        return new AttributeEntry(new AttributeKey(entity, name, arguments), value);
     }
 
 }

@@ -20,8 +20,10 @@ package io.sapl.attributeapi.auth;
 import io.sapl.attributeapi.auth.ApiKey.ApiKeyAuthenticationService;
 import io.sapl.attributeapi.auth.ApiKey.ApiKeyReactiveAuthenticationManager;
 import io.sapl.attributeapi.auth.ApiKey.ApiKeyServerAuthenticationConverter;
+import io.sapl.attributeapi.auth.OAuth2.TenantJwtAuthenticationConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -31,8 +33,14 @@ import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.http.HttpHeaders;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoders;
+import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverterAdapter;
+import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.authentication.AuthenticationWebFilter;
+import reactor.core.publisher.Mono;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
@@ -45,6 +53,9 @@ import static org.springframework.security.config.Customizer.withDefaults;
 public class AttributeSecurityConfiguration {
     private final AttributeApiSecurityProperties properties;
 
+    @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri:}")
+    private String jwtIssuerUri;
+
     @Bean
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
         // CSRF is not needed because we have a stateless API
@@ -54,7 +65,8 @@ public class AttributeSecurityConfiguration {
             throw new IllegalStateException("No authentication method set");
         }
 
-        if (properties.isAllowNoAuth() && !properties.isAllowBasicAuth()) {
+        if (properties.isAllowNoAuth() && !properties.isAllowBasicAuth() && !properties.isAllowApiKeyAuth()
+                && !properties.isAllowOAuth2Auth()) {
             log.warn("Server has been configured to reply to requests without authentication.");
             return http.httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
                     .authorizeExchange(exchange -> exchange.anyExchange().permitAll()).build();
@@ -83,6 +95,26 @@ public class AttributeSecurityConfiguration {
             http.addFilterAfter(apiKeyFilter, SecurityWebFiltersOrder.AUTHENTICATION);
         }
 
+        if (properties.isAllowOAuth2Auth()) {
+            log.info("OAuth2 authentication activated");
+
+            var converter       = new TenantJwtAuthenticationConverter();
+            var adapter         = new ReactiveJwtAuthenticationConverterAdapter(converter);
+            var decoder         = jwtDecoder();
+            var bearerExtractor = new ServerBearerTokenAuthenticationConverter();
+
+            // API keys are also carried as "Authorization: Bearer sapl_..." - leave
+            // those alone here so the apiKeyFilter above gets a chance to handle
+            // them instead of failing JWT decoding.
+            http.oauth2ResourceServer(oauth2 -> oauth2.bearerTokenConverter(exchange -> {
+                String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+                if (authHeader != null && authHeader.startsWith("Bearer sapl_")) {
+                    return Mono.empty();
+                }
+                return bearerExtractor.convert(exchange);
+            }).jwt(jwt -> jwt.jwtDecoder(decoder).jwtAuthenticationConverter(adapter)));
+        }
+
         http.authorizeExchange(exchange -> exchange.anyExchange().authenticated());
 
         return http.build();
@@ -99,7 +131,8 @@ public class AttributeSecurityConfiguration {
     }
 
     private boolean noAuthenticationMechanismIsDefined() {
-        return !properties.isAllowNoAuth() && !properties.isAllowBasicAuth() && !properties.isAllowApiKeyAuth();
+        return !properties.isAllowNoAuth() && !properties.isAllowBasicAuth() && !properties.isAllowApiKeyAuth()
+                && !properties.isAllowOAuth2Auth();
     }
 
     private boolean hasBasicAuthUsers() {
@@ -108,5 +141,13 @@ public class AttributeSecurityConfiguration {
 
     private boolean hasApiKeyUsers() {
         return properties.getUsers().stream().anyMatch(user -> user.getKey() != null);
+    }
+
+    private ReactiveJwtDecoder jwtDecoder() {
+        if (jwtIssuerUri == null || jwtIssuerUri.isBlank()) {
+            throw new IllegalStateException(
+                    "OAuth2 authentication is enabled but 'spring.security.oauth2.resourceserver.jwt.issuer-uri' is not set.");
+        }
+        return ReactiveJwtDecoders.fromIssuerLocation(jwtIssuerUri);
     }
 }

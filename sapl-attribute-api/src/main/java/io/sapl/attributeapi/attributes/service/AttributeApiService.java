@@ -18,8 +18,10 @@
 package io.sapl.attributeapi.attributes.service;
 
 import io.sapl.api.model.ErrorValue;
+import io.sapl.api.model.ObjectValue;
 import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
+import io.sapl.attributeapi.attributes.backend.AttributeEntry;
 import io.sapl.attributeapi.attributes.backend.AttributeKey;
 import io.sapl.attributeapi.attributes.backend.AttributeStore;
 import io.sapl.attributeapi.attributes.dto.AttributePublishRequest;
@@ -75,6 +77,12 @@ public class AttributeApiService {
         return ValueJsonMarshaller.toJsonNodeLenient(value);
     }
 
+    public List<JsonNode> getAll(@Nullable String tenantId) {
+        String resolvedTenantId = resolveTenantId(tenantId);
+
+        return store.getAll(resolvedTenantId).stream().map(this::toJsonNode).toList();
+    }
+
     private String resolveTenantId(@Nullable String tenantId) {
         return tenantId == null || tenantId.isBlank() ? securityProperties.getDefaultTenantId() : tenantId;
     }
@@ -84,5 +92,14 @@ public class AttributeApiService {
     private Value fromString(String data) {
         Value parsed = ValueJsonMarshaller.json(data);
         return parsed instanceof ErrorValue ? Value.of(data) : parsed;
+    }
+
+    private JsonNode toJsonNode(AttributeEntry entry) {
+        var key    = entry.key();
+        var object = ObjectValue.builder().put("entity", key.entity() != null ? key.entity() : Value.NULL)
+                .put("name", Value.of(key.name())).put("arguments", Value.ofArray(key.arguments()))
+                .put("value", entry.value()).build();
+
+        return ValueJsonMarshaller.toJsonNodeLenient(object);
     }
 }

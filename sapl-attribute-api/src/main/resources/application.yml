@@ -1,14 +1,30 @@
 server:
   port: 8090
 
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://keycloak.sapl.local:30080/realms/businessA
+
 io.sapl:
   attributes:
     storage: redis
   attribute-api:
     enabled: true
+    allow-basic-auth: true
     allow-api-key-auth: true
+    allow-oauth2-auth: true
     users:
       - id: app1
         tenant-id: tenant-a
         key:
-          hash: 370499c5f49386272a72df99a4b456d67703113b9ed8debc304ad5e0bb699963
+          hash: fb4a29c5890ab6483e918de5a0a204a33753570ef6413f3266c17bb37cfe1fbb
+        basic:
+          username: nsIFK7C3Kl
+          secret: $argon2id$v=19$m=16384,t=2,p=1$v0eeU8fCOMNmVfnm8a3L2Q$z6JF5D6sDrKBOxDCEvUYoDnJd1iYGhfsUTuEMMwQHsM
+      - id: app2
+        tenant-id: tenant-b
+        key:
+          hash: f082b6cec163badffe9a2751e39e514746aed841f2e4f72339ea6a839cc4ad8d

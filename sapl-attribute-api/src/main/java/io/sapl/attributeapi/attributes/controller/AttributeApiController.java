@@ -100,6 +100,13 @@ public class AttributeApiController {
                 .subscribeOn(Schedulers.boundedElastic())).map(ResponseEntity::ok);
     }
 
+    @GetMapping
+    public Mono<ResponseEntity<List<JsonNode>>> getAllAttributesFromTenant() {
+        return currentTenantId().flatMap(
+                tenantId -> Mono.fromCallable(() -> service.getAll(tenantId)).subscribeOn(Schedulers.boundedElastic()))
+                .map(ResponseEntity::ok);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<String> handleInvalidArgument(IllegalArgumentException e) {
         log.warn(e.getMessage());
@@ -115,8 +122,8 @@ public class AttributeApiController {
     // NO_TENANT_ID (which AttributeApiService treats the same as null) when
     // no AttributeApiUserDetails is present, e.g. in no-auth mode.
     private Mono<String> currentTenantId() {
-        return ReactiveSecurityContextHolder.getContext().map(SecurityContext::getAuthentication)
-                .map(Authentication::getPrincipal).filter(AttributeApiUserDetails.class::isInstance)
+        return ReactiveSecurityContextHolder.getContext().mapNotNull(SecurityContext::getAuthentication)
+                .mapNotNull(Authentication::getPrincipal).filter(AttributeApiUserDetails.class::isInstance)
                 .cast(AttributeApiUserDetails.class).mapNotNull(AttributeApiUserDetails::getTenantId)
                 .defaultIfEmpty(NO_TENANT_ID);
     }

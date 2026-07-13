@@ -1,0 +1,11 @@
+server:
+  port: ${PORT:8091}
+
+vaadin:
+  allowed-packages: io.sapl
+
+# OIDC (Keycloak) login for the "Login with Keycloak" button on the Settings
+# view is opt-in via the "oidc" profile (see application-oidc.yml) - without
+# it, no ClientRegistrationRepository bean exists, so Spring Boot skips
+# oauth2 client wiring entirely and the GUI still works fine with the
+# "No authentication" / "Local credentials" connection modes.

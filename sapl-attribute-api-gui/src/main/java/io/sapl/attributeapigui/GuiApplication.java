@@ -15,23 +15,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributeapi.attributes.backend;
+package io.sapl.attributeapigui;
 
-import io.sapl.api.model.Value;
+import com.vaadin.flow.component.dependency.StyleSheet;
+import com.vaadin.flow.component.page.AppShellConfigurator;
+import com.vaadin.flow.component.page.ColorScheme;
+import com.vaadin.flow.theme.aura.Aura;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import java.time.Duration;
-import java.util.List;
+@SpringBootApplication
+@ColorScheme(ColorScheme.Value.LIGHT_DARK)
+@StyleSheet(Aura.STYLESHEET)
+@StyleSheet("themes/sapl/styles-aura.css")
 
-public interface AttributeStore {
-    void publish(AttributeKey key, Value value, String tenantId);
-
-    void publish(AttributeKey key, Value value, Duration ttl, String tenantId);
-
-    void remove(AttributeKey key, String tenantId);
-
-    Value get(AttributeKey key, String tenantId);
-
-    List<AttributeEntry> getAll(String tenantId);
-
-    void close();
+public class GuiApplication implements AppShellConfigurator {
+    public static void main(String[] args) {
+        SpringApplication.run(GuiApplication.class, args);
+    }
 }

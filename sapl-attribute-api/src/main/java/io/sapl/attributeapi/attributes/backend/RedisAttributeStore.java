@@ -20,9 +20,14 @@ package io.sapl.attributeapi.attributes.backend;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import io.sapl.api.model.ArrayValue;
 import io.sapl.api.model.Value;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
 import io.sapl.api.model.ValueJsonMarshaller;
 import lombok.NonNull;
 import org.jspecify.annotations.Nullable;
@@ -31,6 +36,7 @@ import org.jspecify.annotations.Nullable;
 public class RedisAttributeStore implements AttributeStore {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String UNDEFINED_STRING       = "UNDEFINED";
+    private static final String ERROR_TENANT_IS_EMPTY  = "tenantId must be resolved before reaching the store";
 
     private final RedisClient                             client;
     private final StatefulRedisConnection<String, String> connection;
@@ -43,12 +49,12 @@ public class RedisAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void publish(AttributeKey signature, Value value, @Nullable String tenantId) {
+    public void publish(AttributeKey signature, Value value, String tenantId) {
         publishInternal(signature, value, null, tenantId);
     }
 
     @Override
-    public void publish(AttributeKey signature, Value value, Duration ttl, @Nullable String tenantId) {
+    public void publish(AttributeKey signature, Value value, Duration ttl, String tenantId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
@@ -60,26 +66,46 @@ public class RedisAttributeStore implements AttributeStore {
         String redisKey   = toRedisKey(signature, tenantId);
         String redisValue = ValueJsonMarshaller.toJsonString(value);
 
+        Map<String, String> fields = new HashMap<>();
+        fields.put("name", signature.name());
+        fields.put("arguments", valuesToJson(signature.arguments()));
+        fields.put("value", redisValue);
+        if (signature.entity() != null) {
+            fields.put("entity", ValueJsonMarshaller.toJsonString(signature.entity()));
+        }
+
+        cli.hset(redisKey, fields);
         if (ttl == null) {
-            cli.set(redisKey, redisValue);
+            cli.persist(redisKey);
         } else {
-            cli.setex(redisKey, ttl.toSeconds(), redisValue);
+            cli.expire(redisKey, ttl.toSeconds());
         }
         cli.publish("sapl:changes:" + redisKey, redisValue);
     }
 
     @Override
-    public void remove(AttributeKey signature, @Nullable String tenantId) {
+    public void remove(AttributeKey signature, String tenantId) {
         String redisKey = toRedisKey(signature, tenantId);
         cli.del(redisKey);
         cli.publish("sapl:changes:" + redisKey, UNDEFINED_STRING);
     }
 
     @Override
-    public Value get(AttributeKey signature, @Nullable String tenantId) {
-        var raw = cli.get(toRedisKey(signature, tenantId));
+    public Value get(AttributeKey signature, String tenantId) {
+        var raw = cli.hget(toRedisKey(signature, tenantId), "value");
 
         return raw != null ? ValueJsonMarshaller.json(raw) : Value.UNDEFINED;
+    }
+
+    @Override
+    public List<AttributeEntry> getAll(String tenantId) {
+        // todo: implement a Redis scan with MATCH-pattern. Keys is blocking the whole
+        // keyspace
+        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+
+        String pattern = "sapl:attribute:" + tenantId + ":*";
+        return cli.keys(pattern).stream().map(cli::hgetall).filter(hash -> !hash.isEmpty())
+                .map(RedisAttributeStore::toAttributeEntry).toList();
     }
 
     @Override
@@ -97,5 +123,20 @@ public class RedisAttributeStore implements AttributeStore {
 
     private String valuesToJson(List<Value> values) {
         return ValueJsonMarshaller.toJsonString(Value.ofArray(values));
+    }
+
+    private static AttributeEntry toAttributeEntry(Map<String, String> hash) {
+        String name         = hash.get("name");
+        String entityRaw    = hash.get("entity");
+        String argumentsRaw = hash.get("arguments");
+        String valueRaw     = hash.get("value");
+
+        Value       entity    = entityRaw != null ? ValueJsonMarshaller.json(entityRaw) : null;
+        List<Value> arguments = argumentsRaw != null && ValueJsonMarshaller.json(argumentsRaw) instanceof ArrayValue a
+                ? a
+                : List.of();
+        Value       value     = valueRaw != null ? ValueJsonMarshaller.json(valueRaw) : Value.UNDEFINED;
+
+        return new AttributeEntry(new AttributeKey(entity, name, arguments), value);
     }
 }

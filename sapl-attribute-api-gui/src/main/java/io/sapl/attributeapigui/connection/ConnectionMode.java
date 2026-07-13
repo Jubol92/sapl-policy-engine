@@ -15,23 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributeapi.attributes.backend;
+package io.sapl.attributeapigui.connection;
 
-import io.sapl.api.model.Value;
-
-import java.time.Duration;
-import java.util.List;
-
-public interface AttributeStore {
-    void publish(AttributeKey key, Value value, String tenantId);
-
-    void publish(AttributeKey key, Value value, Duration ttl, String tenantId);
-
-    void remove(AttributeKey key, String tenantId);
-
-    Value get(AttributeKey key, String tenantId);
-
-    List<AttributeEntry> getAll(String tenantId);
-
-    void close();
+public enum ConnectionMode {
+    NONE,
+    BASIC,
+    API,
+    OIDC
 }

@@ -15,23 +15,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.sapl.attributeapi.attributes.backend;
+package io.sapl.attributeapigui.ui;
 
-import io.sapl.api.model.Value;
+import com.vaadin.flow.component.login.LoginForm;
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.router.Route;
+import com.vaadin.flow.server.auth.AnonymousAllowed;
 
-import java.time.Duration;
-import java.util.List;
+@Route("login")
+@AnonymousAllowed
+public class LoginView extends VerticalLayout {
+    private final LoginForm login = new LoginForm();
 
-public interface AttributeStore {
-    void publish(AttributeKey key, Value value, String tenantId);
-
-    void publish(AttributeKey key, Value value, Duration ttl, String tenantId);
-
-    void remove(AttributeKey key, String tenantId);
-
-    Value get(AttributeKey key, String tenantId);
-
-    List<AttributeEntry> getAll(String tenantId);
-
-    void close();
+    public LoginView() {
+        setSizeFull();
+        setAlignItems(Alignment.CENTER);
+        setJustifyContentMode(JustifyContentMode.CENTER);
+        login.setAction("login");
+        add(login);
+    }
 }
