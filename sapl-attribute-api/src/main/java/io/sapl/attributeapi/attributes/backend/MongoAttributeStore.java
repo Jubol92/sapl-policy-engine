@@ -23,6 +23,7 @@ import io.sapl.api.model.ValueJsonMarshaller;
 import lombok.NonNull;
 import org.bson.Document;
 import org.jspecify.annotations.Nullable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -63,6 +64,16 @@ public class MongoAttributeStore implements AttributeStore {
     }
 
     @Override
+    public Long count(String tenantId) {
+        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+
+        var query = new Query(Criteria.where("tenantId").is(tenantId));
+        query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
+                Criteria.where("expiresAt").gt(new Date())));
+        return mongo.count(query, "attributes").block();
+    }
+
+    @Override
     public Value get(AttributeKey key, String tenantId) {
         var query = doMongoQuery(key, tenantId);
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
@@ -75,12 +86,21 @@ public class MongoAttributeStore implements AttributeStore {
     }
 
     @Override
-    public List<AttributeEntry> getAll(String tenantId) {
+    public List<AttributeEntry> getAll(String tenantId, @Nullable Integer limit, @Nullable Integer offset) {
         Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
 
         var query = new Query(Criteria.where("tenantId").is(tenantId));
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
                 Criteria.where("expiresAt").gt(new Date())));
+        query.with(Sort.by(Sort.Direction.ASC, "name", "entity", "arguments"));
+
+        if (offset != null) {
+            query.skip(offset);
+        }
+
+        if (limit != null) {
+            query.limit(limit);
+        }
 
         return mongo.find(query, Document.class, "attributes").map(MongoAttributeStore::mapDocument).collectList()
                 .block();

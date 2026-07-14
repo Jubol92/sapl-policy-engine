@@ -91,6 +91,12 @@ public class RedisAttributeStore implements AttributeStore {
     }
 
     @Override
+    public Long count(String tenantId) {
+        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+        return (long) cli.keys("sapl:attribute:" + tenantId + ":*").size();
+    }
+
+    @Override
     public Value get(AttributeKey signature, String tenantId) {
         var raw = cli.hget(toRedisKey(signature, tenantId), "value");
 
@@ -98,13 +104,26 @@ public class RedisAttributeStore implements AttributeStore {
     }
 
     @Override
-    public List<AttributeEntry> getAll(String tenantId) {
+    public List<AttributeEntry> getAll(String tenantId, @Nullable Integer limit, @Nullable Integer offset) {
         // todo: implement a Redis scan with MATCH-pattern. Keys is blocking the whole
         // keyspace
         Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
 
         String pattern = "sapl:attribute:" + tenantId + ":*";
-        return cli.keys(pattern).stream().map(cli::hgetall).filter(hash -> !hash.isEmpty())
+
+        // Sort the list of keys to guarantee a deterministic output for limit/offset
+        List<String> keys = cli.keys(pattern).stream().sorted().toList();
+
+        // set the right offset as start point, check if the start exceeds the List
+        // limit and set the endpoint
+        int start = offset != null ? offset : 0;
+        if (start >= keys.size()) {
+            return List.of();
+        }
+        int end = limit != null ? Math.min(start + limit, keys.size()) : keys.size();
+
+        // return the keys with/without limit/offset operations
+        return keys.subList(start, end).stream().map(cli::hgetall).filter(hash -> !hash.isEmpty())
                 .map(RedisAttributeStore::toAttributeEntry).toList();
     }
 

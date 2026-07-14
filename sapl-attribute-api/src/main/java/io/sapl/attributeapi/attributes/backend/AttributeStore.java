@@ -18,6 +18,7 @@
 package io.sapl.attributeapi.attributes.backend;
 
 import io.sapl.api.model.Value;
+import org.jspecify.annotations.Nullable;
 
 import java.time.Duration;
 import java.util.List;
@@ -29,9 +30,11 @@ public interface AttributeStore {
 
     void remove(AttributeKey key, String tenantId);
 
+    Long count(String tenantId);
+
     Value get(AttributeKey key, String tenantId);
 
-    List<AttributeEntry> getAll(String tenantId);
+    List<AttributeEntry> getAll(String tenantId, @Nullable Integer limit, @Nullable Integer offset);
 
     void close();
 }

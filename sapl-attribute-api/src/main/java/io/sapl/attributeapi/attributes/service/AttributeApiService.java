@@ -77,10 +77,22 @@ public class AttributeApiService {
         return ValueJsonMarshaller.toJsonNodeLenient(value);
     }
 
-    public List<JsonNode> getAll(@Nullable String tenantId) {
+    public List<JsonNode> getAll(@Nullable String tenantId, @Nullable Integer limit, @Nullable Integer offset) {
+        if (limit != null && limit <= 0) {
+            throw new IllegalArgumentException("limit must be strictly positive.");
+        }
+        if (offset != null && offset < 0) {
+            throw new IllegalArgumentException("offset must not be negative.");
+        }
+
         String resolvedTenantId = resolveTenantId(tenantId);
 
-        return store.getAll(resolvedTenantId).stream().map(this::toJsonNode).toList();
+        return store.getAll(resolvedTenantId, limit, offset).stream().map(this::toJsonNode).toList();
+    }
+
+    public long count(@Nullable String tenantId) {
+        String resolvedTenantId = resolveTenantId(tenantId);
+        return store.count(resolvedTenantId);
     }
 
     private String resolveTenantId(@Nullable String tenantId) {

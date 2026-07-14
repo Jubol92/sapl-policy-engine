@@ -101,9 +101,17 @@ public class AttributeApiController {
     }
 
     @GetMapping
-    public Mono<ResponseEntity<List<JsonNode>>> getAllAttributesFromTenant() {
+    public Mono<ResponseEntity<List<JsonNode>>> getAllAttributesFromTenant(
+            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset) {
+
+        return currentTenantId().flatMap(tenantId -> Mono.fromCallable(() -> service.getAll(tenantId, limit, offset))
+                .subscribeOn(Schedulers.boundedElastic())).map(ResponseEntity::ok);
+    }
+
+    @GetMapping("/_count")
+    public Mono<ResponseEntity<Long>> count() {
         return currentTenantId().flatMap(
-                tenantId -> Mono.fromCallable(() -> service.getAll(tenantId)).subscribeOn(Schedulers.boundedElastic()))
+                tenantId -> Mono.fromCallable(() -> service.count(tenantId)).subscribeOn(Schedulers.boundedElastic()))
                 .map(ResponseEntity::ok);
     }
 

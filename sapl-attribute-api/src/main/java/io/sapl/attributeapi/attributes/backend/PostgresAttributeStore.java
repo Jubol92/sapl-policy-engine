@@ -62,6 +62,17 @@ public class PostgresAttributeStore implements AttributeStore {
     }
 
     @Override
+    public Long count(String tenantId) {
+        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+
+        var spec = client.sql(
+                "SELECT count(*) FROM attributes where tenant_id = :tenantId AND (expires_at IS NULL OR expires_at > NOW())")
+                .bind("tenantId", tenantId);
+
+        return spec.map(row -> Objects.requireNonNull(row.get(0, Long.class))).one().block();
+    }
+
+    @Override
     public Value get(AttributeKey key, String tenantId) {
         Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
 
@@ -80,13 +91,17 @@ public class PostgresAttributeStore implements AttributeStore {
     }
 
     @Override
-    public List<AttributeEntry> getAll(String tenantId) {
+    public List<AttributeEntry> getAll(String tenantId, @Nullable Integer limit, @Nullable Integer offset) {
         Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
 
-        return client
-                .sql("SELECT name, entity, arguments, value FROM attributes WHERE tenant_id = :tenantId "
-                        + "AND (expires_at IS NULL OR expires_at > NOW())")
-                .bind("tenantId", tenantId).map(PostgresAttributeStore::mapRow).all().collectList().block();
+        var spec = client.sql("SELECT name, entity, arguments, value FROM attributes WHERE tenant_id = :tenantId "
+                + "AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY name, entity, arguments LIMIT :limit OFFSET :offset")
+                .bind("tenantId", tenantId);
+
+        spec = limit != null ? spec.bind("limit", limit) : spec.bindNull("limit", Integer.class);
+        spec = offset != null ? spec.bind("offset", offset) : spec.bindNull("offset", Integer.class);
+
+        return spec.map(PostgresAttributeStore::mapRow).all().collectList().block();
     }
 
     @Override
