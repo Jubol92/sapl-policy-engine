@@ -24,6 +24,7 @@ import io.sapl.api.model.*;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
 import lombok.experimental.Delegate;
+import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
 import org.springframework.r2dbc.core.DatabaseClient;
 import reactor.core.publisher.Mono;
@@ -39,6 +40,7 @@ import java.util.Objects;
 // Using R2DBC because it's reactive. JPA/Hibernate would block
 // R2DBC offers persistent DB connections. A consistent connection
 // is necessary because we need Postgres Pub/Sub
+@Slf4j
 @SuppressWarnings("unused")
 public class PostgresAttributeRepository implements AttributeRepository {
 
@@ -67,7 +69,8 @@ public class PostgresAttributeRepository implements AttributeRepository {
 
         // boundedElastic --> allowing a thread pool with blocking operations
         this.connection.getNotifications().map(Notification::getParameter).publishOn(Schedulers.boundedElastic())
-                .subscribe(this::handleNotification);
+                .subscribe(this::handleNotification, error -> log
+                        .error("Error while handling attribute_changes notification for pdpId '{}'", pdpId, error));
 
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
         loadFromDB();
@@ -111,8 +114,9 @@ public class PostgresAttributeRepository implements AttributeRepository {
     }
 
     public void loadFromDB() {
-        var rows = client.sql("SELECT name, entity, arguments, value, expires_at FROM attributes WHERE pdp_id = :pdpId")
-                .bind("pdpId", pdpId)
+        var rows = client
+                .sql("SELECT name, entity, arguments, value, expires_at FROM attributes WHERE tenant_id = :tenantId")
+                .bind("tenantId", pdpId)
                 .map(row -> new DBEntry(row.get("name", String.class), row.get("entity", String.class),
                         row.get("arguments", String.class), row.get("value", String.class),
                         row.get("expires_at", OffsetDateTime.class)))
@@ -148,16 +152,16 @@ public class PostgresAttributeRepository implements AttributeRepository {
         // ON CONFLICT triggers the unique constraint in the db if the value already
         // exists
         // Indexes:
-        // "attributes_pdp_id_name_entity_arguments_key" UNIQUE CONSTRAINT, btree
-        // (pdp_id, name, entity, arguments) NULLS NOT DISTINCT
+        // "attributes_tenant_id_name_entity_arguments_key" UNIQUE CONSTRAINT, btree
+        // (tenant_id, name, entity, arguments) NULLS NOT DISTINCT
         // DO UPDATE executes an update statement instead. This logic implements a real
         // upsert and an atomic execution
         // The atomic execution is important to have the same Decision if a multi node
         // setup is used
-        var upsertSpec = client.sql("INSERT INTO attributes (pdp_id, name, entity, arguments, value, expires_at) "
-                + "VALUES (:pdpId, :name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt) "
-                + "ON CONFLICT (pdp_id, name, entity, arguments) "
-                + "DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at").bind("pdpId", pdpId)
+        var upsertSpec = client.sql("INSERT INTO attributes (tenant_id, name, entity, arguments, value, expires_at) "
+                + "VALUES (:tenantId, :name, CAST(:entity AS jsonb), CAST(:arguments AS jsonb), CAST(:value AS jsonb), :expiresAt) "
+                + "ON CONFLICT (tenant_id, name, entity, arguments) "
+                + "DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at").bind("tenantId", pdpId)
                 .bind("name", key.name()).bind("arguments", argumentsJson).bind("value", valueJson);
 
         upsertSpec = expiresAt != null ? upsertSpec.bind("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
@@ -172,10 +176,10 @@ public class PostgresAttributeRepository implements AttributeRepository {
         var argumentsJson = valuesToJson(key.arguments());
 
         var spec = client
-                .sql("DELETE FROM attributes " + "WHERE pdp_id = :pdpId AND name = :name "
+                .sql("DELETE FROM attributes " + "WHERE tenant_id = :tenantId AND name = :name "
                         + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
                         + "AND arguments = CAST(:arguments AS jsonb)")
-                .bind("pdpId", pdpId).bind("name", key.name()).bind("arguments", argumentsJson);
+                .bind("tenantId", pdpId).bind("name", key.name()).bind("arguments", argumentsJson);
         (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class)).then().block();
     }
 
@@ -196,20 +200,22 @@ public class PostgresAttributeRepository implements AttributeRepository {
     }
 
     private void handleNotification(String payload) {
-        var node              = (ObjectValue) ValueJsonMarshaller.json(payload);
-        var notificationPdpId = ((TextValue) Objects.requireNonNull(node.get("pdpId"))).value();
+        var node                 = (ObjectValue) ValueJsonMarshaller.json(payload);
+        var notificationTenantId = ((TextValue) Objects.requireNonNull(node.get("tenantId"))).value();
 
-        if (!pdpId.equals(notificationPdpId)) {
+        if (!pdpId.equals(notificationTenantId)) {
             return; // notification is for a different tenant, not relevant to this repository
         }
 
         var key        = payloadToKey(node);
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
 
-        var spec = client.sql("SELECT name, entity, arguments, value, expires_at FROM attributes "
-                + "WHERE pdp_id = :pdpId AND name = :name " + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
-                + "AND arguments = CAST(:arguments AS jsonb)").bind("pdpId", pdpId).bind("name", key.name())
-                .bind("arguments", valuesToJson(key.arguments()));
+        var spec = client
+                .sql("SELECT name, entity, arguments, value, expires_at FROM attributes "
+                        + "WHERE tenant_id = :tenantId AND name = :name "
+                        + "AND entity IS NOT DISTINCT FROM CAST(:entity AS jsonb) "
+                        + "AND arguments = CAST(:arguments AS jsonb)")
+                .bind("tenantId", pdpId).bind("name", key.name()).bind("arguments", valuesToJson(key.arguments()));
 
         var row = (entityJson != null ? spec.bind("entity", entityJson) : spec.bindNull("entity", String.class))
                 .map(r -> new DBEntry(r.get("name", String.class), r.get("entity", String.class),
@@ -233,7 +239,7 @@ public class PostgresAttributeRepository implements AttributeRepository {
     }
 
     private String keyToPayload(RepositoryKey key) {
-        return ValueJsonMarshaller.toJsonString(ObjectValue.builder().put("pdpId", Value.of(pdpId))
+        return ValueJsonMarshaller.toJsonString(ObjectValue.builder().put("tenantId", Value.of(pdpId))
                 .put("name", Value.of(key.name())).put("entity", key.entity() != null ? key.entity() : Value.NULL)
                 .put("arguments", Value.ofArray(key.arguments())).build());
     }

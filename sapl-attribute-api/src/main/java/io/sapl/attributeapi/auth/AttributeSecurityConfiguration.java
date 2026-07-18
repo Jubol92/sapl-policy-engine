@@ -24,6 +24,7 @@ import io.sapl.attributeapi.auth.OAuth2.TenantJwtAuthenticationConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -48,6 +49,7 @@ import static org.springframework.security.config.Customizer.withDefaults;
 @Configuration
 @EnableWebFluxSecurity
 @EnableConfigurationProperties(AttributeApiSecurityProperties.class)
+@ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 @RequiredArgsConstructor
 @SuppressWarnings("unused")
 public class AttributeSecurityConfiguration {

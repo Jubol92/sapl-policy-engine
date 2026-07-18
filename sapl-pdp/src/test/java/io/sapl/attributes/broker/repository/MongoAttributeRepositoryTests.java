@@ -88,7 +88,7 @@ class MongoAttributeRepositoryTests {
 
             val client2   = MongoClients.create(mongo.getConnectionString());
             val template2 = new ReactiveMongoTemplate(new SimpleReactiveMongoDatabaseFactory(client2, "sapl"));
-            try (val repo2 = new MongoAttributeRepository(template2, "test-tenant-2")) {
+            try (val repo2 = new MongoAttributeRepository(template2, "test-tenant")) {
                 repo2.observe(invocation("sapl.test.persist"), received::add);
                 assertThat(received.getFirst()).isEqualTo(Value.of(42L));
             }

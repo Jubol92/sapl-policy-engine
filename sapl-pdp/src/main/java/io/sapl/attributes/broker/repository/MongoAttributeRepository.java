@@ -23,6 +23,7 @@ import io.sapl.api.model.ValueJsonMarshaller;
 import io.sapl.attributes.broker.AttributeRepository;
 import lombok.NonNull;
 import lombok.experimental.Delegate;
+import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
@@ -35,7 +36,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 
+@Slf4j
 @SuppressWarnings("unused")
 public class MongoAttributeRepository implements AttributeRepository {
     // Delegate Pattern . observer(), close() etc are generated
@@ -67,11 +70,11 @@ public class MongoAttributeRepository implements AttributeRepository {
     // Requires MongoDB replica set (even a single-node rs works: --replSet rs0)
     private void subscribeToChangeStream() {
         mongo.changeStream(Document.class).watchCollection("attributes").listen()
-                .filter(event -> event.getBody() != null && pdpId.equals(event.getBody().getString("pdpId")))
+                .filter(event -> event.getBody() != null && pdpId.equals(event.getBody().getString("tenantId")))
                 .publishOn(Schedulers.boundedElastic()).subscribe(event -> {
                     var doc = event.getBody();
                     var opType = event.getOperationType();
-                    var entityJson = doc.getString("entity");
+                    var entityJson = Objects.requireNonNull(doc).getString("entity");
                     var key = new RepositoryKey(entityJson != null ? ValueJsonMarshaller.json(entityJson) : null,
                             doc.getString("name"), jsonToValues(doc.getString("arguments")));
 
@@ -94,11 +97,12 @@ public class MongoAttributeRepository implements AttributeRepository {
                     } else {
                         internalRepository.publish(key, value);
                     }
-                });
+                }, error -> log.error("Error while handling attribute change stream event for pdpId '{}'", pdpId,
+                        error));
     }
 
     public void loadFromDB() {
-        var query = new Query(Criteria.where("pdpId").is(pdpId));
+        var query = new Query(Criteria.where("tenantId").is(pdpId));
         mongo.find(query, Document.class, "attributes").toStream().forEach(doc -> {
             var entityJson = doc.getString("entity");
             var argsJson   = doc.getString("arguments");
@@ -148,7 +152,7 @@ public class MongoAttributeRepository implements AttributeRepository {
         var argsJson   = valuesToJson(key.arguments());
         var valueJson  = ValueJsonMarshaller.toJsonString(value);
 
-        var update = new Update().set("pdpId", pdpId).set("name", key.name()).set("entity", entityJson)
+        var update = new Update().set("tenantId", pdpId).set("name", key.name()).set("entity", entityJson)
                 .set("arguments", argsJson).set("value", valueJson)
                 .set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
 
@@ -164,7 +168,7 @@ public class MongoAttributeRepository implements AttributeRepository {
     private Query doMongoQuery(RepositoryKey key) {
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argsJson   = valuesToJson(key.arguments());
-        var criteria   = Criteria.where("pdpId").is(pdpId).and("name").is(key.name()).and("entity").is(entityJson)
+        var criteria   = Criteria.where("tenantId").is(pdpId).and("name").is(key.name()).and("entity").is(entityJson)
                 .and("arguments").is(argsJson);
 
         return new Query(criteria);
