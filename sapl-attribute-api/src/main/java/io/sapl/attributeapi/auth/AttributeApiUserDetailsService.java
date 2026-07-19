@@ -18,22 +18,21 @@
 package io.sapl.attributeapi.auth;
 
 import lombok.RequiredArgsConstructor;
-import org.jspecify.annotations.NullMarked;
-import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
 import org.springframework.security.core.userdetails.UserDetails;
-import reactor.core.publisher.Mono;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
 @RequiredArgsConstructor
-public class AttributeApiUserDetailsService implements ReactiveUserDetailsService {
+public class AttributeApiUserDetailsService implements UserDetailsService {
 
     private final AttributeApiSecurityProperties properties;
 
     @Override
-    @NullMarked
-    public Mono<UserDetails> findByUsername(String username) {
-        return Mono.justOrEmpty(properties.getUsers().stream()
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        return properties.getUsers().stream()
                 .filter(user -> user.getBasic() != null && username.equals(user.getBasic().getUsername())).findFirst()
                 .map(user -> new AttributeApiUserDetails(user.getBasic().getUsername(), user.getBasic().getSecret(),
-                        user.getTenantId())));
+                        user.getTenantId()))
+                .orElseThrow(() -> new UsernameNotFoundException("User '" + username + "' not found"));
     }
 }

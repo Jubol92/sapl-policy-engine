@@ -20,24 +20,30 @@ package io.sapl.attributeapi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Backend-agnostic API tests. Each subclass wires a different
  * AttributeRepository implementation and runs this full test suite against it.
  */
+@AutoConfigureMockMvc
 abstract class AbstractAttributeApiTests {
 
-    @LocalServerPort
-    int port;
-
-    protected WebTestClient webClient;
+    @Autowired
+    protected MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        webClient = WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
         cleanRepository();
     }
 
@@ -47,78 +53,82 @@ abstract class AbstractAttributeApiTests {
 
     @Test
     @DisplayName("POST /api/attributes/{name} returns 201")
-    void publishGlobalAttribute() {
-        webClient.post().uri("/api/attributes/sapl.test.role").contentType(MediaType.APPLICATION_JSON).bodyValue("""
+    void publishGlobalAttribute() throws Exception {
+        mockMvc.perform(post("/api/attributes/sapl.test.role").contentType(MediaType.APPLICATION_JSON).content("""
                 { "value": "test_1",
                   "ttl": 60
                  }
-                """).exchange().expectStatus().isCreated();
+                """)).andExpect(status().isCreated());
     }
 
     @Test
     @DisplayName("POST /api/attributes/sapl.test/{name} returns 201")
-    void publishAttributeWithEntity() {
-        webClient.post().uri("/api/attributes/sapl.test/sapl.test.role").contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("""
+    void publishAttributeWithEntity() throws Exception {
+        mockMvc.perform(
+                post("/api/attributes/sapl.test/sapl.test.role").contentType(MediaType.APPLICATION_JSON).content("""
                         { "value": "test_2",
                           "ttl": 60
                           }
-                        """).exchange().expectStatus().isCreated();
+                        """)).andExpect(status().isCreated());
     }
 
     @Test
     @DisplayName("POST /api/attributes/sapl.test/{name} returns error for unqualified name")
-    void publishAttributeWithInvalidAttributeName() {
-        webClient.post().uri("/api/attributes/sapl.test/sapl").contentType(MediaType.APPLICATION_JSON).bodyValue("""
-                { "value": "test_3",
-                  "ttl": 60
-                 }
-                """).exchange().expectStatus().isBadRequest().expectBody(String.class)
-                .value(body -> org.assertj.core.api.Assertions.assertThat(body).contains("fully qualified name"));
+    void publishAttributeWithInvalidAttributeName() throws Exception {
+        MvcResult result = mockMvc
+                .perform(post("/api/attributes/sapl.test/sapl").contentType(MediaType.APPLICATION_JSON).content("""
+                        { "value": "test_3",
+                          "ttl": 60
+                         }
+                        """)).andExpect(status().isBadRequest()).andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).contains("fully qualified name");
     }
 
     @Test
     @DisplayName("GET /api/attributes/sapl.test/{name} returns test_4 value")
-    void getGlobalAttribute() {
-        webClient.post().uri("/api/attributes/sapl.test.deletion").contentType(MediaType.APPLICATION_JSON).bodyValue("""
+    void getGlobalAttribute() throws Exception {
+        mockMvc.perform(post("/api/attributes/sapl.test.deletion").contentType(MediaType.APPLICATION_JSON).content("""
                 { "value": "test_4",
                   "ttl": 60
                   }
-                """).exchange().expectStatus().isCreated();
+                """)).andExpect(status().isCreated());
 
-        webClient.get().uri("/api/attributes/sapl.test.deletion").exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$").isEqualTo("test_4");
+        MvcResult result = mockMvc.perform(get("/api/attributes/sapl.test.deletion")).andExpect(status().isOk())
+                .andReturn();
+        assertThat(result.getResponse().getContentAsString()).isEqualTo("\"test_4\"");
     }
 
     @Test
     @DisplayName("DELETE /api/attributes/sapl.test/{name} returns 201")
-    void publishAndDeleteAttribute() {
-        webClient.post().uri("/api/attributes/sapl.test/sapl.test.publishAndDelete")
-                .contentType(MediaType.APPLICATION_JSON).bodyValue("""
+    void publishAndDeleteAttribute() throws Exception {
+        mockMvc.perform(post("/api/attributes/sapl.test/sapl.test.publishAndDelete")
+                .contentType(MediaType.APPLICATION_JSON).content("""
                         { "value": "test_5",
                           "ttl": 60
                           }
-                        """).exchange().expectStatus().isCreated();
+                        """)).andExpect(status().isCreated());
 
-        webClient.get().uri("/api/attributes/sapl.test/sapl.test.publishAndDelete").exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$").isEqualTo("test_5");
+        MvcResult result = mockMvc.perform(get("/api/attributes/sapl.test/sapl.test.publishAndDelete"))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(result.getResponse().getContentAsString()).isEqualTo("\"test_5\"");
 
-        webClient.delete().uri("/api/attributes/sapl.test/sapl.test.publishAndDelete").exchange().expectStatus()
-                .isNoContent();
+        mockMvc.perform(delete("/api/attributes/sapl.test/sapl.test.publishAndDelete"))
+                .andExpect(status().isNoContent());
     }
 
     @Test
     @DisplayName("TTL expires for /api/attributes/sapl.test/{name} and shows no content")
-    void ttlExpires() throws InterruptedException {
-        webClient.post().uri("/api/attributes/sapl.test/sapl.test.ttlExpired").contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("""
+    void ttlExpires() throws Exception {
+        mockMvc.perform(post("/api/attributes/sapl.test/sapl.test.ttlExpired").contentType(MediaType.APPLICATION_JSON)
+                .content("""
                         { "value": "test_6",
                           "ttl": 1
                           }
-                        """).exchange().expectStatus().isCreated();
+                        """)).andExpect(status().isCreated());
 
         Thread.sleep(2000);
 
-        webClient.get().uri("/api/attributes/sapl.test/sapl.test.ttlExpired").exchange().expectStatus().isNotFound();
+        mockMvc.perform(get("/api/attributes/sapl.test/sapl.test.ttlExpired")).andExpect(status().isNotFound());
     }
 }

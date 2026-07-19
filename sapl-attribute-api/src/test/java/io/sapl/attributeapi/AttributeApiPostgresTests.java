@@ -31,8 +31,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "io.sapl.attribute-api.enabled=true", "io.sapl.attribute-api.allow-no-auth=true" })
+@SpringBootTest(classes = AttributeApiApplication.class, properties = { "io.sapl.attribute-api.enabled=true",
+        "io.sapl.attribute-api.allow-no-auth=true", "io.sapl.attribute-api.allow-basic-auth=false",
+        "io.sapl.attribute-api.allow-api-key-auth=false", "io.sapl.attribute-api.allow-oauth2-auth=false",
+        "io.sapl.attributes.storage=none" })
 @Testcontainers
 @Import(AttributeApiPostgresTests.Config.class)
 class AttributeApiPostgresTests extends AbstractAttributeApiTests {

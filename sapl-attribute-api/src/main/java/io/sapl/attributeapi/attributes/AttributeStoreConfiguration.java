@@ -75,9 +75,11 @@ public class AttributeStoreConfiguration {
         val m           = properties.getMongo();
         val credentials = m.getUsername() == null || m.getUsername().isBlank() ? ""
                 : encode(m.getUsername()) + ":" + encode(m.getPassword()) + "@";
-        val authSource  = m.getUsername() == null || m.getUsername().isBlank() ? ""
+
+        val authSource = m.getUsername() == null || m.getUsername().isBlank() ? ""
                 : "?authSource=" + m.getAuthDatabase();
-        val cs          = new ConnectionString(
+
+        val cs = new ConnectionString(
                 "mongodb://" + credentials + m.getHost() + ":" + m.getPort() + "/" + m.getDatabase() + authSource);
         return new ReactiveMongoTemplate(MongoClients.create(cs), cs.getDatabase());
     }

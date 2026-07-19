@@ -89,7 +89,7 @@ class RedisAttributeRepositoryTests {
             repository.publish(key("sapl.test.persist"), Value.of(42L));
 
             val client2 = RedisClient.create(redis.getRedisURI());
-            try (val repo2 = new RedisAttributeRepository(client2, "test-tenant-2")) {
+            try (val repo2 = new RedisAttributeRepository(client2, "test-tenant")) {
                 repo2.observe(invocation("sapl.test.persist"), received::add);
                 assertThat(received.getFirst()).isEqualTo(Value.of(42L));
             }
@@ -155,7 +155,7 @@ class RedisAttributeRepositoryTests {
             received.clear(); // discard initial UNDEFINED
 
             val client2 = RedisClient.create(redis.getRedisURI());
-            try (val repo2 = new RedisAttributeRepository(client2, "test-tenant-2")) {
+            try (val repo2 = new RedisAttributeRepository(client2, "test-tenant")) {
                 repo2.publish(key("sapl.test.observe"), Value.of("from-other-node"));
             }
 

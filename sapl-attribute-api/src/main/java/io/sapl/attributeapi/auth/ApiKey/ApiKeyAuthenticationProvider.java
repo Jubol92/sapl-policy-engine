@@ -18,41 +18,42 @@
 package io.sapl.attributeapi.auth.ApiKey;
 
 import io.sapl.attributeapi.auth.AttributeApiUserDetails;
-import org.jspecify.annotations.NullMarked;
+import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.ReactiveAuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import reactor.core.publisher.Mono;
+import org.springframework.security.core.AuthenticationException;
 
 import java.security.NoSuchAlgorithmException;
 import java.util.Objects;
 import java.util.Optional;
 
-public class ApiKeyReactiveAuthenticationManager implements ReactiveAuthenticationManager {
+public class ApiKeyAuthenticationProvider implements AuthenticationProvider {
     private final ApiKeyAuthenticationService service;
 
-    public ApiKeyReactiveAuthenticationManager(ApiKeyAuthenticationService service) {
+    public ApiKeyAuthenticationProvider(ApiKeyAuthenticationService service) {
         this.service = service;
     }
 
     @Override
-    @NullMarked
-    public Mono<Authentication> authenticate(Authentication authentication) {
+    public Authentication authenticate(Authentication authentication) throws AuthenticationException {
         String key = Objects.requireNonNull(authentication.getCredentials()).toString();
         try {
             Optional<AttributeApiUserDetails> user = service.findByApiKey(key);
 
             if (user.isPresent()) {
                 AttributeApiUserDetails details = user.get();
-                return Mono.just(
-                        UsernamePasswordAuthenticationToken.authenticated(details, null, details.getAuthorities()));
+                return UsernamePasswordAuthenticationToken.authenticated(details, null, details.getAuthorities());
             } else {
-                return Mono.error((new BadCredentialsException("Invalid API key")));
+                throw new BadCredentialsException("Invalid API key");
             }
-
         } catch (NoSuchAlgorithmException e) {
-            return Mono.error(new IllegalStateException(e));
+            throw new IllegalStateException(e);
         }
+    }
+
+    @Override
+    public boolean supports(Class<?> authentication) {
+        return UsernamePasswordAuthenticationToken.class.isAssignableFrom(authentication);
     }
 }

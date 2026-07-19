@@ -43,6 +43,7 @@ import java.util.Objects;
 @Slf4j
 @SuppressWarnings("unused")
 public class PostgresAttributeRepository implements AttributeRepository {
+    private static final String ERROR_HANDLE_NOTIFICATION = "Error while handling attribute_changes notification for pdpId '{}'";
 
     // Delegate Pattern . observer(), close() etc are generated
     @Delegate(excludes = ExcludedMethods.class)
@@ -69,8 +70,7 @@ public class PostgresAttributeRepository implements AttributeRepository {
 
         // boundedElastic --> allowing a thread pool with blocking operations
         this.connection.getNotifications().map(Notification::getParameter).publishOn(Schedulers.boundedElastic())
-                .subscribe(this::handleNotification, error -> log
-                        .error("Error while handling attribute_changes notification for pdpId '{}'", pdpId, error));
+                .subscribe(this::handleNotification, error -> log.error(ERROR_HANDLE_NOTIFICATION, pdpId, error));
 
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);
         loadFromDB();

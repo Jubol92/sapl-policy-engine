@@ -36,8 +36,7 @@ import java.util.function.Consumer;
 public class RedisAttributeRepository implements AttributeRepository {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String ERROR_CLOSED           = "Repository is closed.";
-
-    private static final String UNDEFINED_STRING = "UNDEFINED";
+    private static final String UNDEFINED_STRING       = "UNDEFINED";
 
     private final ReentrantLock                                 lock = new ReentrantLock(true);
     private final RedisClient                                   client;
@@ -121,10 +120,19 @@ public class RedisAttributeRepository implements AttributeRepository {
         // String redisValue = toRawString(value);
         String redisValue = ValueJsonMarshaller.toJsonString(value);
 
+        Map<String, String> fields = new HashMap<>();
+        fields.put("name", key.name());
+        fields.put("arguments", valuesToJson(key.arguments()));
+        fields.put("value", redisValue);
+        if (key.entity() != null) {
+            fields.put("entity", ValueJsonMarshaller.toJsonString(key.entity()));
+        }
+
+        cli.hset(redisKey, fields);
         if (ttl == null) {
-            cli.set(redisKey, redisValue);
+            cli.persist(redisKey);
         } else {
-            cli.setex(redisKey, ttl.toSeconds(), redisValue);
+            cli.expire(redisKey, ttl.toSeconds());
         }
         cli.publish("sapl:changes:" + redisKey, redisValue);
     }
@@ -152,7 +160,7 @@ public class RedisAttributeRepository implements AttributeRepository {
             } else {
                 // Register callback for future changes
                 observersByKey.computeIfAbsent(redisKey, k -> new HashSet<>()).add(onValue);
-                String raw = cli.get(redisKey);
+                String raw = cli.hget(redisKey, "value");
                 initial = (raw == null || UNDEFINED_STRING.equals(raw)) ? Value.UNDEFINED
                         : ValueJsonMarshaller.json(raw);
             }

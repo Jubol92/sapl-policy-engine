@@ -17,37 +17,41 @@
  */
 package io.sapl.attributeapi.auth;
 
+import io.sapl.attributeapi.auth.ApiKey.ApiKeyAuthenticationFilter;
+import io.sapl.attributeapi.auth.ApiKey.ApiKeyAuthenticationProvider;
 import io.sapl.attributeapi.auth.ApiKey.ApiKeyAuthenticationService;
-import io.sapl.attributeapi.auth.ApiKey.ApiKeyReactiveAuthenticationManager;
-import io.sapl.attributeapi.auth.ApiKey.ApiKeyServerAuthenticationConverter;
 import io.sapl.attributeapi.auth.OAuth2.TenantJwtAuthenticationConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
-import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
-import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.http.HttpHeaders;
-import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
-import org.springframework.security.oauth2.jwt.ReactiveJwtDecoders;
-import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverterAdapter;
-import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter;
-import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.authentication.AuthenticationWebFilter;
-import reactor.core.publisher.Mono;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtDecoders;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
 @Slf4j
 @Configuration
-@EnableWebFluxSecurity
+@EnableWebSecurity
 @EnableConfigurationProperties(AttributeApiSecurityProperties.class)
 @ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 @RequiredArgsConstructor
@@ -59,9 +63,15 @@ public class AttributeSecurityConfiguration {
     private String jwtIssuerUri;
 
     @Bean
-    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+    @Order(1)
+    public SecurityFilterChain attributeApiSecurityFilterChain(HttpSecurity http) throws Exception {
+        // Scoped to this module's endpoints only, so it can coexist with a
+        // host application's own catch-all SecurityFilterChain (e.g. when
+        // embedded inside sapl-node).
+        http.securityMatcher("/api/attributes/**");
+
         // CSRF is not needed because we have a stateless API
-        http.csrf(ServerHttpSecurity.CsrfSpec::disable);
+        http.csrf(AbstractHttpConfigurer::disable);
 
         if (noAuthenticationMechanismIsDefined()) {
             throw new IllegalStateException("No authentication method set");
@@ -70,9 +80,12 @@ public class AttributeSecurityConfiguration {
         if (properties.isAllowNoAuth() && !properties.isAllowBasicAuth() && !properties.isAllowApiKeyAuth()
                 && !properties.isAllowOAuth2Auth()) {
             log.warn("Server has been configured to reply to requests without authentication.");
-            return http.httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
-                    .authorizeExchange(exchange -> exchange.anyExchange().permitAll()).build();
+            return http.httpBasic(AbstractHttpConfigurer::disable)
+                    .authorizeHttpRequests(auth -> auth.anyRequest().permitAll()).build();
         }
+
+        var authenticationEntryPoint = new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED);
+        http.exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(authenticationEntryPoint));
 
         if (properties.isAllowBasicAuth()) {
             log.info("Basic authentication activated.");
@@ -81,7 +94,7 @@ public class AttributeSecurityConfiguration {
             }
             http.httpBasic(withDefaults());
         } else {
-            http.httpBasic(ServerHttpSecurity.HttpBasicSpec::disable);
+            http.httpBasic(AbstractHttpConfigurer::disable);
         }
 
         if (properties.isAllowApiKeyAuth()) {
@@ -91,43 +104,42 @@ public class AttributeSecurityConfiguration {
                 log.warn("API key authentication is enabled but no api key is defined.");
             }
 
-            AuthenticationWebFilter apiKeyFilter = new AuthenticationWebFilter(
-                    new ApiKeyReactiveAuthenticationManager(new ApiKeyAuthenticationService(properties)));
-            apiKeyFilter.setServerAuthenticationConverter(new ApiKeyServerAuthenticationConverter());
-            http.addFilterAfter(apiKeyFilter, SecurityWebFiltersOrder.AUTHENTICATION);
+            AuthenticationManager apiKeyAuthenticationManager = new ProviderManager(
+                    new ApiKeyAuthenticationProvider(new ApiKeyAuthenticationService(properties)));
+            http.addFilterBefore(new ApiKeyAuthenticationFilter(apiKeyAuthenticationManager, authenticationEntryPoint),
+                    UsernamePasswordAuthenticationFilter.class);
         }
 
         if (properties.isAllowOAuth2Auth()) {
             log.info("OAuth2 authentication activated");
 
-            var converter       = new TenantJwtAuthenticationConverter();
-            var adapter         = new ReactiveJwtAuthenticationConverterAdapter(converter);
-            var decoder         = jwtDecoder();
-            var bearerExtractor = new ServerBearerTokenAuthenticationConverter();
+            var converter = new TenantJwtAuthenticationConverter();
+            var decoder   = jwtDecoder();
 
             // API keys are also carried as "Authorization: Bearer sapl_..." - leave
             // those alone here so the apiKeyFilter above gets a chance to handle
             // them instead of failing JWT decoding.
-            http.oauth2ResourceServer(oauth2 -> oauth2.bearerTokenConverter(exchange -> {
-                String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+            http.oauth2ResourceServer(oauth2 -> oauth2.bearerTokenResolver(request -> {
+                String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
                 if (authHeader != null && authHeader.startsWith("Bearer sapl_")) {
-                    return Mono.empty();
+                    return null;
                 }
-                return bearerExtractor.convert(exchange);
-            }).jwt(jwt -> jwt.jwtDecoder(decoder).jwtAuthenticationConverter(adapter)));
+                return new DefaultBearerTokenResolver().resolve(request);
+            }).jwt(jwt -> jwt.decoder(decoder).jwtAuthenticationConverter(converter)));
         }
 
-        http.authorizeExchange(exchange -> exchange.anyExchange().authenticated());
+        http.authorizeHttpRequests(auth -> auth.anyRequest().authenticated());
 
         return http.build();
     }
 
     @Bean
-    public ReactiveUserDetailsService reactiveUserDetailsService() {
+    public UserDetailsService userDetailsService() {
         return new AttributeApiUserDetailsService(properties);
     }
 
     @Bean
+    @ConditionalOnMissingBean(PasswordEncoder.class)
     public PasswordEncoder passwordEncoder() {
         return Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8();
     }
@@ -145,11 +157,11 @@ public class AttributeSecurityConfiguration {
         return properties.getUsers().stream().anyMatch(user -> user.getKey() != null);
     }
 
-    private ReactiveJwtDecoder jwtDecoder() {
+    private JwtDecoder jwtDecoder() {
         if (jwtIssuerUri == null || jwtIssuerUri.isBlank()) {
             throw new IllegalStateException(
                     "OAuth2 authentication is enabled but 'spring.security.oauth2.resourceserver.jwt.issuer-uri' is not set.");
         }
-        return ReactiveJwtDecoders.fromIssuerLocation(jwtIssuerUri);
+        return JwtDecoders.fromIssuerLocation(jwtIssuerUri);
     }
 }

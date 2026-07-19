@@ -41,6 +41,8 @@ import java.util.Objects;
 @Slf4j
 @SuppressWarnings("unused")
 public class MongoAttributeRepository implements AttributeRepository {
+    private static final String ERROR_HANDLE_NOTIFICATION = "Error while handling attribute_changes notification for pdpId '{}'";
+
     // Delegate Pattern . observer(), close() etc are generated
     @Delegate(excludes = ExcludedMethods.class)
     private final InMemoryAttributeRepository internalRepository;
@@ -97,8 +99,7 @@ public class MongoAttributeRepository implements AttributeRepository {
                     } else {
                         internalRepository.publish(key, value);
                     }
-                }, error -> log.error("Error while handling attribute change stream event for pdpId '{}'", pdpId,
-                        error));
+                }, error -> log.error(ERROR_HANDLE_NOTIFICATION, pdpId, error));
     }
 
     public void loadFromDB() {

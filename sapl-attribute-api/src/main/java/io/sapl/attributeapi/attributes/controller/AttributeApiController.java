@@ -25,12 +25,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.ReactiveSecurityContextHolder;
-import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
 import java.util.List;
@@ -48,21 +44,17 @@ public class AttributeApiController {
     private final AttributeApiService service;
 
     @PostMapping("/{entity}/{name}")
-    public Mono<ResponseEntity<Void>> publish(@PathVariable String entity, @PathVariable String name,
+    public ResponseEntity<Void> publish(@PathVariable String entity, @PathVariable String name,
             @RequestBody AttributePublishRequest request) {
-        return currentTenantId()
-                .flatMap(tenantId -> Mono.fromRunnable(() -> service.publish(entity, name, request, tenantId))
-                        .subscribeOn(Schedulers.boundedElastic()))
-                .thenReturn(ResponseEntity.created(URI.create("/api/attributes/" + entity + "/" + name)).build());
+        service.publish(entity, name, request, currentTenantId());
+        return ResponseEntity.created(URI.create("/api/attributes/" + entity + "/" + name)).build();
     }
 
     @PostMapping("/{name}")
-    public Mono<ResponseEntity<Void>> publishGlobalAttribute(@PathVariable String name,
+    public ResponseEntity<Void> publishGlobalAttribute(@PathVariable String name,
             @RequestBody AttributePublishRequest request) {
-        return currentTenantId()
-                .flatMap(tenantId -> Mono.fromRunnable(() -> service.publish(null, name, request, tenantId))
-                        .subscribeOn(Schedulers.boundedElastic()))
-                .thenReturn(ResponseEntity.created(URI.create("/api/attributes/" + name)).build());
+        service.publish(null, name, request, currentTenantId());
+        return ResponseEntity.created(URI.create("/api/attributes/" + name)).build();
     }
 
     // RFC 7231, Section 4.3.5: A payload within a DELETE request message has no
@@ -71,48 +63,40 @@ public class AttributeApiController {
     // implementations to reject the request
     // Some clients may ignore in Delete-Request the body, so it's an URL parameter
     @DeleteMapping("/{entity}/{name}")
-    public Mono<ResponseEntity<Void>> deleteAttribute(@PathVariable String entity, @PathVariable String name,
+    public ResponseEntity<Void> deleteAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return currentTenantId()
-                .flatMap(tenantId -> Mono.fromRunnable(() -> service.delete(entity, name, args, tenantId))
-                        .subscribeOn(Schedulers.boundedElastic()))
-                .thenReturn(ResponseEntity.noContent().build());
+        service.delete(entity, name, args, currentTenantId());
+        return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{name}")
-    public Mono<ResponseEntity<Void>> deleteGlobalAttribute(@PathVariable String name,
+    public ResponseEntity<Void> deleteGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return currentTenantId().flatMap(tenantId -> Mono.fromRunnable(() -> service.delete(null, name, args, tenantId))
-                .subscribeOn(Schedulers.boundedElastic())).thenReturn(ResponseEntity.noContent().build());
+        service.delete(null, name, args, currentTenantId());
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{entity}/{name}")
-    public Mono<ResponseEntity<JsonNode>> getAttribute(@PathVariable String entity, @PathVariable String name,
+    public ResponseEntity<JsonNode> getAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return currentTenantId().flatMap(tenantId -> Mono.fromCallable(() -> service.get(entity, name, args, tenantId))
-                .subscribeOn(Schedulers.boundedElastic())).map(ResponseEntity::ok);
+        return ResponseEntity.ok(service.get(entity, name, args, currentTenantId()));
     }
 
     @GetMapping("/{name}")
-    public Mono<ResponseEntity<JsonNode>> getGlobalAttribute(@PathVariable String name,
+    public ResponseEntity<JsonNode> getGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return currentTenantId().flatMap(tenantId -> Mono.fromCallable(() -> service.get(null, name, args, tenantId))
-                .subscribeOn(Schedulers.boundedElastic())).map(ResponseEntity::ok);
+        return ResponseEntity.ok(service.get(null, name, args, currentTenantId()));
     }
 
     @GetMapping
-    public Mono<ResponseEntity<List<JsonNode>>> getAllAttributesFromTenant(
-            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset) {
-
-        return currentTenantId().flatMap(tenantId -> Mono.fromCallable(() -> service.getAll(tenantId, limit, offset))
-                .subscribeOn(Schedulers.boundedElastic())).map(ResponseEntity::ok);
+    public ResponseEntity<List<JsonNode>> getAllAttributesFromTenant(@RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset) {
+        return ResponseEntity.ok(service.getAll(currentTenantId(), limit, offset));
     }
 
     @GetMapping("/_count")
-    public Mono<ResponseEntity<Long>> count() {
-        return currentTenantId().flatMap(
-                tenantId -> Mono.fromCallable(() -> service.count(tenantId)).subscribeOn(Schedulers.boundedElastic()))
-                .map(ResponseEntity::ok);
+    public ResponseEntity<Long> count() {
+        return ResponseEntity.ok(service.count(currentTenantId()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -129,10 +113,12 @@ public class AttributeApiController {
     // Resolves the tenantId of the authenticated principal. Falls back to
     // NO_TENANT_ID (which AttributeApiService treats the same as null) when
     // no AttributeApiUserDetails is present, e.g. in no-auth mode.
-    private Mono<String> currentTenantId() {
-        return ReactiveSecurityContextHolder.getContext().mapNotNull(SecurityContext::getAuthentication)
-                .mapNotNull(Authentication::getPrincipal).filter(AttributeApiUserDetails.class::isInstance)
-                .cast(AttributeApiUserDetails.class).mapNotNull(AttributeApiUserDetails::getTenantId)
-                .defaultIfEmpty(NO_TENANT_ID);
+    private String currentTenantId() {
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof AttributeApiUserDetails principal)) {
+            return NO_TENANT_ID;
+        }
+        var tenantId = principal.getTenantId();
+        return tenantId != null ? tenantId : NO_TENANT_ID;
     }
 }

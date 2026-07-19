@@ -24,27 +24,35 @@ import io.sapl.attributeapi.attributes.backend.RedisAttributeStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * E2E tests for API key authentication in the standalone attribute API.
  * Raw key "testkey123" was hashed with SHA-256 to produce the hash configured
  * below (sha256sum on the raw key value).
  */
-@SpringBootTest(classes = AttributeApiApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "io.sapl.attribute-api.enabled=true", "io.sapl.attribute-api.allow-api-key-auth=true",
-        "io.sapl.attribute-api.users[0].id=tenant-a-user", "io.sapl.attribute-api.users[0].tenant-id=tenant-a",
-        "io.sapl.attribute-api.users[0].key.hash=87d452521c9a7f5c9052ae6190e900a46e2a2df5f144158c2fc20b797adb470b" })
+@SpringBootTest(classes = AttributeApiApplication.class, properties = { "io.sapl.attribute-api.enabled=true",
+        "io.sapl.attribute-api.allow-api-key-auth=true", "io.sapl.attribute-api.users[0].id=tenant-a-user",
+        "io.sapl.attribute-api.users[0].tenant-id=tenant-a",
+        "io.sapl.attribute-api.users[0].key.hash=87d452521c9a7f5c9052ae6190e900a46e2a2df5f144158c2fc20b797adb470b",
+        "io.sapl.attributes.storage=none" })
+@AutoConfigureMockMvc
 @Testcontainers
 @Import(ApiKeyAuthenticationTests.Config.class)
 class ApiKeyAuthenticationTests {
@@ -55,14 +63,11 @@ class ApiKeyAuthenticationTests {
     @Container
     static GenericContainer<?> redis = new GenericContainer<>("redis:7").withExposedPorts(6379);
 
-    @LocalServerPort
-    int port;
-
-    private WebTestClient webClient;
+    @Autowired
+    private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        webClient = WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
         RedisClient.create(redisUri()).connect().sync().flushall();
     }
 
@@ -72,34 +77,34 @@ class ApiKeyAuthenticationTests {
 
     @Test
     @DisplayName("Valid API key authenticates and can publish and read an attribute")
-    void validApiKeySucceeds() {
-        webClient.post().uri("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, VALID_KEY_HEADER)
-                .contentType(MediaType.APPLICATION_JSON).bodyValue("""
+    void validApiKeySucceeds() throws Exception {
+        mockMvc.perform(post("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, VALID_KEY_HEADER)
+                .contentType(MediaType.APPLICATION_JSON).content("""
                         { "value": "test_apikey", "ttl": 60 }
-                        """).exchange().expectStatus().isCreated();
+                        """)).andExpect(status().isCreated());
 
-        webClient.get().uri("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, VALID_KEY_HEADER)
-                .exchange().expectStatus().isOk().expectBody().jsonPath("$").isEqualTo("test_apikey");
+        mockMvc.perform(get("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, VALID_KEY_HEADER))
+                .andExpect(status().isOk()).andExpect(jsonPath("$").value("test_apikey"));
     }
 
     @Test
     @DisplayName("Unknown API key is rejected")
-    void unknownApiKeyIsRejected() {
-        webClient.get().uri("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, UNKNOWN_KEY_HEADER)
-                .exchange().expectStatus().isUnauthorized();
+    void unknownApiKeyIsRejected() throws Exception {
+        mockMvc.perform(get("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, UNKNOWN_KEY_HEADER))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     @DisplayName("Missing Authorization header is rejected")
-    void missingHeaderIsRejected() {
-        webClient.get().uri("/api/attributes/sapl.test.apikey").exchange().expectStatus().isUnauthorized();
+    void missingHeaderIsRejected() throws Exception {
+        mockMvc.perform(get("/api/attributes/sapl.test.apikey")).andExpect(status().isUnauthorized());
     }
 
     @Test
     @DisplayName("Authorization header without the sapl_ API key prefix is rejected")
-    void wrongPrefixIsRejected() {
-        webClient.get().uri("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, "Bearer sometoken")
-                .exchange().expectStatus().isUnauthorized();
+    void wrongPrefixIsRejected() throws Exception {
+        mockMvc.perform(get("/api/attributes/sapl.test.apikey").header(HttpHeaders.AUTHORIZATION, "Bearer sometoken"))
+                .andExpect(status().isUnauthorized());
     }
 
     @TestConfiguration
