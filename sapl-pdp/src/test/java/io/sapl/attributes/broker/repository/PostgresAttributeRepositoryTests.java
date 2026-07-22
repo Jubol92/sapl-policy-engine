@@ -79,11 +79,11 @@ class PostgresAttributeRepositoryTests {
     }
 
     private static RepositoryKey key(String name) {
-        return new RepositoryKey(null, name, List.of());
+        return new RepositoryKey(null, name, List.of(), "test-tenant");
     }
 
     private static AttributeFinderInvocation invocation(String fqn) {
-        return new AttributeFinderInvocation("default", "default", fqn, List.of(), Duration.ofSeconds(1),
+        return new AttributeFinderInvocation("test-tenant", "test-tenant", fqn, List.of(), Duration.ofSeconds(1),
                 Duration.ofMillis(100), Duration.ofMillis(100), 0L, false,
                 new AttributeAccessContext(Value.EMPTY_OBJECT, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT));
     }

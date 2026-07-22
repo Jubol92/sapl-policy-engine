@@ -127,7 +127,7 @@ public class PostgresAttributeRepository implements AttributeRepository {
 
         for (var row : rows) {
             var key       = new RepositoryKey(row.entity() != null ? ValueJsonMarshaller.json(row.entity()) : null,
-                    row.name(), jsonToValues(row.arguments()));
+                    row.name(), jsonToValues(row.arguments()), pdpId);
             var value     = ValueJsonMarshaller.json(row.value());
             var expiresAt = row.expiresAt() != null ? row.expiresAt().toInstant() : null;
 
@@ -249,6 +249,6 @@ public class PostgresAttributeRepository implements AttributeRepository {
         var entity    = entityVal == Value.NULL ? null : entityVal;
         var arguments = ((ArrayValue) Objects.requireNonNull(node.get("arguments"))).stream().toList();
 
-        return new RepositoryKey(entity, name, arguments);
+        return new RepositoryKey(entity, name, arguments, pdpId);
     }
 }

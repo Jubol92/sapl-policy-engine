@@ -81,7 +81,7 @@ public class MongoAttributeRepository implements AttributeRepository {
                     var opType = event.getOperationType();
                     var entityJson = Objects.requireNonNull(doc).getString("entity");
                     var key = new RepositoryKey(entityJson != null ? ValueJsonMarshaller.json(entityJson) : null,
-                            doc.getString("name"), jsonToValues(doc.getString("arguments")));
+                            doc.getString("name"), jsonToValues(doc.getString("arguments")), pdpId);
 
                     if (opType != null && "delete".equals(opType.getValue())) {
                         internalRepository.remove(key);
@@ -118,7 +118,7 @@ public class MongoAttributeRepository implements AttributeRepository {
                 return;
 
             var key       = new RepositoryKey(entityJson != null ? ValueJsonMarshaller.json(entityJson) : null,
-                    doc.getString("name"), jsonToValues(argsJson));
+                    doc.getString("name"), jsonToValues(argsJson), pdpId);
             var value     = ValueJsonMarshaller.json(valueJson);
             var dateField = doc.getDate("expiresAt");
             var expiresAt = dateField != null ? dateField.toInstant() : null;

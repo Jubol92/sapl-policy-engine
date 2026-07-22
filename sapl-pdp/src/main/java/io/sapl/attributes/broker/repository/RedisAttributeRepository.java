@@ -149,7 +149,7 @@ public class RedisAttributeRepository implements AttributeRepository {
 
     @Override
     public Registration observe(@NonNull AttributeFinderInvocation invocation, @NonNull Consumer<Value> onValue) {
-        RepositoryKey key = new RepositoryKey(invocation.entity(), invocation.attributeName(), invocation.arguments());
+        RepositoryKey key = RepositoryKey.fromInvocation(invocation);
 
         String redisKey = toRedisKey(key);
         Value  initial;
