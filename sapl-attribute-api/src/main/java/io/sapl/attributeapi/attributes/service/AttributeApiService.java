@@ -43,7 +43,7 @@ public class AttributeApiService {
     private final AttributeStore                 store;
     private final AttributeApiSecurityProperties securityProperties;
 
-    public void publish(String entity, String attribute, AttributePublishRequest body, @Nullable String tenantId) {
+    public void publish(String entity, String attribute, AttributePublishRequest body, @Nullable String pdpId) {
         List<Value> arguments   = body.getArguments() == null ? List.of()
                 : body.getArguments().stream().map(ValueJsonMarshaller::fromJsonNode).toList();
         Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
@@ -53,24 +53,23 @@ public class AttributeApiService {
         var sig = new AttributeKey(entityValue, attribute, arguments);
 
         if (ttl == null || ttl <= 0) {
-            store.publish(sig, value, resolveTenantId(tenantId));
+            store.publish(sig, value, resolvePdpId(pdpId));
         } else {
-            store.publish(sig, value, Duration.ofSeconds(ttl), resolveTenantId(tenantId));
+            store.publish(sig, value, Duration.ofSeconds(ttl), resolvePdpId(pdpId));
         }
     }
 
-    public void delete(String entity, String attribute, List<String> rawArgs, @Nullable String tenantId) {
+    public void delete(String entity, String attribute, List<String> rawArgs, @Nullable String pdpId) {
         List<Value> arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
         Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
 
-        store.remove(new AttributeKey(entityValue, attribute, arguments), resolveTenantId(tenantId));
+        store.remove(new AttributeKey(entityValue, attribute, arguments), resolvePdpId(pdpId));
     }
 
-    public JsonNode get(String entity, String attribute, List<String> rawArgs, @Nullable String tenantId) {
+    public JsonNode get(String entity, String attribute, List<String> rawArgs, @Nullable String pdpId) {
         List<Value> arguments   = rawArgs == null ? List.of() : rawArgs.stream().map(this::fromString).toList();
         Value       entityValue = entity != null && !entity.isBlank() ? Value.of(entity) : null;
-        Value       value       = store.get(new AttributeKey(entityValue, attribute, arguments),
-                resolveTenantId(tenantId));
+        Value       value       = store.get(new AttributeKey(entityValue, attribute, arguments), resolvePdpId(pdpId));
 
         if (value == Value.UNDEFINED)
             throw new NoSuchElementException();
@@ -78,7 +77,7 @@ public class AttributeApiService {
         return ValueJsonMarshaller.toJsonNodeLenient(value);
     }
 
-    public List<JsonNode> getAll(@Nullable String tenantId, @Nullable Integer limit, @Nullable Integer offset) {
+    public List<JsonNode> getAll(@Nullable String pdpId, @Nullable Integer limit, @Nullable Integer offset) {
         if (limit != null && limit <= 0) {
             throw new IllegalArgumentException("limit must be strictly positive.");
         }
@@ -86,18 +85,18 @@ public class AttributeApiService {
             throw new IllegalArgumentException("offset must not be negative.");
         }
 
-        String resolvedTenantId = resolveTenantId(tenantId);
+        String resolvedPdpId = resolvePdpId(pdpId);
 
-        return store.getAll(resolvedTenantId, limit, offset).stream().map(this::toJsonNode).toList();
+        return store.getAll(resolvedPdpId, limit, offset).stream().map(this::toJsonNode).toList();
     }
 
-    public long count(@Nullable String tenantId) {
-        String resolvedTenantId = resolveTenantId(tenantId);
-        return store.count(resolvedTenantId);
+    public long count(@Nullable String pdpId) {
+        String resolvedPdpId = resolvePdpId(pdpId);
+        return store.count(resolvedPdpId);
     }
 
-    private String resolveTenantId(@Nullable String tenantId) {
-        return tenantId == null || tenantId.isBlank() ? securityProperties.getDefaultTenantId() : tenantId;
+    private String resolvePdpId(@Nullable String pdpId) {
+        return pdpId == null || pdpId.isBlank() ? securityProperties.getDefaultTenantId() : pdpId;
     }
 
     // Converts a query-parameter string into a SAPL value.

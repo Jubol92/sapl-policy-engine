@@ -30,12 +30,12 @@ public class AttributeApiUserDetails implements UserDetails {
 
     private final String username;
     private final String password;
-    private final String tenantId;
+    private final String pdpId;
 
-    public AttributeApiUserDetails(String username, String password, String tenantId) {
+    public AttributeApiUserDetails(String username, String password, String pdpId) {
         this.username = username;
         this.password = password;
-        this.tenantId = tenantId;
+        this.pdpId    = pdpId;
     }
 
     @Override

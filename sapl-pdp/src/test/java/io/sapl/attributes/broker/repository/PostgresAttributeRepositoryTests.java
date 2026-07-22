@@ -42,14 +42,14 @@ class PostgresAttributeRepositoryTests {
 
     private static final String CREATE_TABLE = """
             CREATE TABLE IF NOT EXISTS attributes (
-                tenant_id  TEXT        NOT NULL,
+                pdp_id     TEXT        NOT NULL,
                 name       TEXT        NOT NULL,
                 entity     JSONB,
                 arguments  JSONB       NOT NULL DEFAULT '[]',
                 value      JSONB       NOT NULL,
                 expires_at TIMESTAMPTZ,
-                CONSTRAINT attributes_tenant_id_name_entity_arguments_key
-                    UNIQUE NULLS NOT DISTINCT (tenant_id, name, entity, arguments)
+                CONSTRAINT attributes_pdp_id_name_entity_arguments_key
+                    UNIQUE NULLS NOT DISTINCT (pdp_id, name, entity, arguments)
             )
             """;
 

@@ -54,6 +54,6 @@ public class AttributeApiSecurityProperties {
 
     @Data
     public static class OAuth2 {
-        private String oidcTenantClaim;
+        private String oidcPdpIdClaim;
     }
 }

@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
 public class RedisAttributeStore implements AttributeStore {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String UNDEFINED_STRING       = "UNDEFINED";
-    private static final String ERROR_TENANT_IS_EMPTY  = "tenantId must be resolved before reaching the store";
+    private static final String ERROR_PDP_ID_IS_EMPTY  = "pdpId must be resolved before reaching the store";
 
     private final RedisClient                             client;
     private final StatefulRedisConnection<String, String> connection;
@@ -49,21 +49,20 @@ public class RedisAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void publish(AttributeKey signature, Value value, String tenantId) {
-        publishInternal(signature, value, null, tenantId);
+    public void publish(AttributeKey signature, Value value, String pdpId) {
+        publishInternal(signature, value, null, pdpId);
     }
 
     @Override
-    public void publish(AttributeKey signature, Value value, Duration ttl, String tenantId) {
+    public void publish(AttributeKey signature, Value value, Duration ttl, String pdpId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
-        publishInternal(signature, value, ttl, tenantId);
+        publishInternal(signature, value, ttl, pdpId);
     }
 
-    private void publishInternal(AttributeKey signature, @NonNull Value value, @Nullable Duration ttl,
-            String tenantId) {
-        String redisKey   = toRedisKey(signature, tenantId);
+    private void publishInternal(AttributeKey signature, @NonNull Value value, @Nullable Duration ttl, String pdpId) {
+        String redisKey   = toRedisKey(signature, pdpId);
         String redisValue = ValueJsonMarshaller.toJsonString(value);
 
         Map<String, String> fields = new HashMap<>();
@@ -84,32 +83,32 @@ public class RedisAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void remove(AttributeKey signature, String tenantId) {
-        String redisKey = toRedisKey(signature, tenantId);
+    public void remove(AttributeKey signature, String pdpId) {
+        String redisKey = toRedisKey(signature, pdpId);
         cli.del(redisKey);
         cli.publish("sapl:changes:" + redisKey, UNDEFINED_STRING);
     }
 
     @Override
-    public Long count(String tenantId) {
-        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
-        return (long) cli.keys("sapl:attribute:" + tenantId + ":*").size();
+    public Long count(String pdpId) {
+        Objects.requireNonNull(pdpId, ERROR_PDP_ID_IS_EMPTY);
+        return (long) cli.keys("sapl:attribute:" + pdpId + ":*").size();
     }
 
     @Override
-    public Value get(AttributeKey signature, String tenantId) {
-        var raw = cli.hget(toRedisKey(signature, tenantId), "value");
+    public Value get(AttributeKey signature, String pdpId) {
+        var raw = cli.hget(toRedisKey(signature, pdpId), "value");
 
         return raw != null ? ValueJsonMarshaller.json(raw) : Value.UNDEFINED;
     }
 
     @Override
-    public List<AttributeEntry> getAll(String tenantId, @Nullable Integer limit, @Nullable Integer offset) {
+    public List<AttributeEntry> getAll(String pdpId, @Nullable Integer limit, @Nullable Integer offset) {
         // todo: implement a Redis scan with MATCH-pattern. Keys is blocking the whole
         // keyspace
-        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+        Objects.requireNonNull(pdpId, ERROR_PDP_ID_IS_EMPTY);
 
-        String pattern = "sapl:attribute:" + tenantId + ":*";
+        String pattern = "sapl:attribute:" + pdpId + ":*";
 
         // Sort the list of keys to guarantee a deterministic output for limit/offset
         List<String> keys = cli.keys(pattern).stream().sorted().toList();
@@ -133,11 +132,11 @@ public class RedisAttributeStore implements AttributeStore {
         client.close();
     }
 
-    private String toRedisKey(AttributeKey signature, String tenantId) {
+    private String toRedisKey(AttributeKey signature, String pdpId) {
         String entity    = signature.entity() != null ? ValueJsonMarshaller.toJsonString(signature.entity()) : "null";
         String arguments = valuesToJson(signature.arguments());
 
-        return "sapl:attribute:" + tenantId + ":" + entity + ":" + signature.name() + ":" + arguments;
+        return "sapl:attribute:" + pdpId + ":" + entity + ":" + signature.name() + ":" + arguments;
     }
 
     private String valuesToJson(List<Value> values) {

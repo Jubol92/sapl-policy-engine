@@ -75,7 +75,7 @@ public class MongoAttributeRepository implements AttributeRepository {
         mongo.changeStream(Document.class)
                 .withOptions(options -> options.fullDocumentLookup(FullDocument.UPDATE_LOOKUP))
                 .watchCollection("attributes").listen()
-                .filter(event -> event.getBody() != null && pdpId.equals(event.getBody().getString("tenantId")))
+                .filter(event -> event.getBody() != null && pdpId.equals(event.getBody().getString("pdpId")))
                 .publishOn(Schedulers.boundedElastic()).subscribe(event -> {
                     var doc = event.getBody();
                     var opType = event.getOperationType();
@@ -108,7 +108,7 @@ public class MongoAttributeRepository implements AttributeRepository {
     }
 
     public void loadFromDB() {
-        var query = new Query(Criteria.where("tenantId").is(pdpId));
+        var query = new Query(Criteria.where("pdpId").is(pdpId));
         mongo.find(query, Document.class, "attributes").toStream().forEach(doc -> {
             var entityJson = doc.getString("entity");
             var argsJson   = doc.getString("arguments");
@@ -158,7 +158,7 @@ public class MongoAttributeRepository implements AttributeRepository {
         var argsJson   = valuesToJson(key.arguments());
         var valueJson  = ValueJsonMarshaller.toJsonString(value);
 
-        var update = new Update().set("tenantId", pdpId).set("name", key.name()).set("entity", entityJson)
+        var update = new Update().set("pdpId", pdpId).set("name", key.name()).set("entity", entityJson)
                 .set("arguments", argsJson).set("value", valueJson)
                 .set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
 
@@ -174,7 +174,7 @@ public class MongoAttributeRepository implements AttributeRepository {
     private Query doMongoQuery(RepositoryKey key) {
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argsJson   = valuesToJson(key.arguments());
-        var criteria   = Criteria.where("tenantId").is(pdpId).and("name").is(key.name()).and("entity").is(entityJson)
+        var criteria   = Criteria.where("pdpId").is(pdpId).and("name").is(key.name()).and("entity").is(entityJson)
                 .and("arguments").is(argsJson);
 
         return new Query(criteria);

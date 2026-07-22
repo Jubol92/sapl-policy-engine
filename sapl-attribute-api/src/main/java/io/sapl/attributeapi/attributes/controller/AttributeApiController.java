@@ -39,21 +39,21 @@ import java.util.NoSuchElementException;
 @RequestMapping("/api/attributes")
 @SuppressWarnings("unused")
 public class AttributeApiController {
-    private static final String NO_TENANT_ID = "";
+    private static final String NO_PDP_ID = "";
 
     private final AttributeApiService service;
 
     @PostMapping("/{entity}/{name}")
     public ResponseEntity<Void> publish(@PathVariable String entity, @PathVariable String name,
             @RequestBody AttributePublishRequest request) {
-        service.publish(entity, name, request, currentTenantId());
+        service.publish(entity, name, request, currentPdpId());
         return ResponseEntity.created(URI.create("/api/attributes/" + entity + "/" + name)).build();
     }
 
     @PostMapping("/{name}")
     public ResponseEntity<Void> publishGlobalAttribute(@PathVariable String name,
             @RequestBody AttributePublishRequest request) {
-        service.publish(null, name, request, currentTenantId());
+        service.publish(null, name, request, currentPdpId());
         return ResponseEntity.created(URI.create("/api/attributes/" + name)).build();
     }
 
@@ -65,38 +65,38 @@ public class AttributeApiController {
     @DeleteMapping("/{entity}/{name}")
     public ResponseEntity<Void> deleteAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        service.delete(entity, name, args, currentTenantId());
+        service.delete(entity, name, args, currentPdpId());
         return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{name}")
     public ResponseEntity<Void> deleteGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        service.delete(null, name, args, currentTenantId());
+        service.delete(null, name, args, currentPdpId());
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{entity}/{name}")
     public ResponseEntity<JsonNode> getAttribute(@PathVariable String entity, @PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return ResponseEntity.ok(service.get(entity, name, args, currentTenantId()));
+        return ResponseEntity.ok(service.get(entity, name, args, currentPdpId()));
     }
 
     @GetMapping("/{name}")
     public ResponseEntity<JsonNode> getGlobalAttribute(@PathVariable String name,
             @RequestParam(value = "arg", required = false) List<String> args) {
-        return ResponseEntity.ok(service.get(null, name, args, currentTenantId()));
+        return ResponseEntity.ok(service.get(null, name, args, currentPdpId()));
     }
 
     @GetMapping
-    public ResponseEntity<List<JsonNode>> getAllAttributesFromTenant(@RequestParam(required = false) Integer limit,
+    public ResponseEntity<List<JsonNode>> getAllAttributesFromPdp(@RequestParam(required = false) Integer limit,
             @RequestParam(required = false) Integer offset) {
-        return ResponseEntity.ok(service.getAll(currentTenantId(), limit, offset));
+        return ResponseEntity.ok(service.getAll(currentPdpId(), limit, offset));
     }
 
     @GetMapping("/_count")
     public ResponseEntity<Long> count() {
-        return ResponseEntity.ok(service.count(currentTenantId()));
+        return ResponseEntity.ok(service.count(currentPdpId()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -110,15 +110,15 @@ public class AttributeApiController {
         return ResponseEntity.notFound().build();
     }
 
-    // Resolves the tenantId of the authenticated principal. Falls back to
-    // NO_TENANT_ID (which AttributeApiService treats the same as null) when
+    // Resolves the pdpId of the authenticated principal. Falls back to
+    // NO_PDP_ID (which AttributeApiService treats the same as null) when
     // no AttributeApiUserDetails is present, e.g. in no-auth mode.
-    private String currentTenantId() {
+    private String currentPdpId() {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof AttributeApiUserDetails principal)) {
-            return NO_TENANT_ID;
+            return NO_PDP_ID;
         }
-        var tenantId = principal.getTenantId();
-        return tenantId != null ? tenantId : NO_TENANT_ID;
+        var pdpId = principal.getPdpId();
+        return pdpId != null ? pdpId : NO_PDP_ID;
     }
 }

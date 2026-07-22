@@ -37,7 +37,7 @@ import java.util.Objects;
 @SuppressWarnings("unused")
 public class MongoAttributeStore implements AttributeStore {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
-    private static final String ERROR_TENANT_IS_EMPTY  = "tenantId must be resolved before reaching the store";
+    private static final String ERROR_PDP_ID_IS_EMPTY  = "pdpId must be resolved before reaching the store";
 
     private final ReactiveMongoTemplate mongo;
 
@@ -46,36 +46,36 @@ public class MongoAttributeStore implements AttributeStore {
     }
 
     @Override
-    public void publish(AttributeKey key, Value value, String tenantId) {
-        upsertToDB(key, value, null, tenantId);
+    public void publish(AttributeKey key, Value value, String pdpId) {
+        upsertToDB(key, value, null, pdpId);
     }
 
     @Override
-    public void publish(AttributeKey key, Value value, Duration ttl, String tenantId) {
+    public void publish(AttributeKey key, Value value, Duration ttl, String pdpId) {
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException(ERROR_TTL_NOT_POSITIVE);
         }
-        upsertToDB(key, value, Instant.now().plus(ttl), tenantId);
+        upsertToDB(key, value, Instant.now().plus(ttl), pdpId);
     }
 
     @Override
-    public void remove(AttributeKey signature, String tenantId) {
-        deleteFromDB(signature, tenantId);
+    public void remove(AttributeKey signature, String pdpId) {
+        deleteFromDB(signature, pdpId);
     }
 
     @Override
-    public Long count(String tenantId) {
-        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+    public Long count(String pdpId) {
+        Objects.requireNonNull(pdpId, ERROR_PDP_ID_IS_EMPTY);
 
-        var query = new Query(Criteria.where("tenantId").is(tenantId));
+        var query = new Query(Criteria.where("pdpId").is(pdpId));
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
                 Criteria.where("expiresAt").gt(new Date())));
         return mongo.count(query, "attributes").block();
     }
 
     @Override
-    public Value get(AttributeKey key, String tenantId) {
-        var query = doMongoQuery(key, tenantId);
+    public Value get(AttributeKey key, String pdpId) {
+        var query = doMongoQuery(key, pdpId);
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
                 Criteria.where("expiresAt").gt(new Date())));
         var document = mongo.findOne(query, Document.class, "attributes").block();
@@ -86,10 +86,10 @@ public class MongoAttributeStore implements AttributeStore {
     }
 
     @Override
-    public List<AttributeEntry> getAll(String tenantId, @Nullable Integer limit, @Nullable Integer offset) {
-        Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
+    public List<AttributeEntry> getAll(String pdpId, @Nullable Integer limit, @Nullable Integer offset) {
+        Objects.requireNonNull(pdpId, ERROR_PDP_ID_IS_EMPTY);
 
-        var query = new Query(Criteria.where("tenantId").is(tenantId));
+        var query = new Query(Criteria.where("pdpId").is(pdpId));
 
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
                 Criteria.where("expiresAt").gt(new Date())));
@@ -112,26 +112,26 @@ public class MongoAttributeStore implements AttributeStore {
 
     }
 
-    private void deleteFromDB(@NonNull AttributeKey key, String tenantId) {
-        mongo.remove(doMongoQuery(key, tenantId), "attributes").block();
+    private void deleteFromDB(@NonNull AttributeKey key, String pdpId) {
+        mongo.remove(doMongoQuery(key, pdpId), "attributes").block();
     }
 
-    private void upsertToDB(@NonNull AttributeKey key, Value value, @Nullable Instant expiresAt, String tenantId) {
+    private void upsertToDB(@NonNull AttributeKey key, Value value, @Nullable Instant expiresAt, String pdpId) {
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argsJson   = valuesToJson(key.arguments());
         var valueJson  = ValueJsonMarshaller.toJsonString(value);
 
-        var update = new Update().set("tenantId", tenantId).set("name", key.name()).set("entity", entityJson)
+        var update = new Update().set("pdpId", pdpId).set("name", key.name()).set("entity", entityJson)
                 .set("arguments", argsJson).set("value", valueJson)
                 .set("expiresAt", expiresAt != null ? Date.from(expiresAt) : null);
 
-        mongo.upsert(doMongoQuery(key, tenantId), update, "attributes").block();
+        mongo.upsert(doMongoQuery(key, pdpId), update, "attributes").block();
     }
 
-    private Query doMongoQuery(AttributeKey key, String tenantId) {
+    private Query doMongoQuery(AttributeKey key, String pdpId) {
         var entityJson = key.entity() != null ? ValueJsonMarshaller.toJsonString(key.entity()) : null;
         var argsJson   = valuesToJson(key.arguments());
-        var criteria   = Criteria.where("tenantId").is(tenantId).and("name").is(key.name()).and("entity").is(entityJson)
+        var criteria   = Criteria.where("pdpId").is(pdpId).and("name").is(key.name()).and("entity").is(entityJson)
                 .and("arguments").is(argsJson);
 
         return new Query(criteria);

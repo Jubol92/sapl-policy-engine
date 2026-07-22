@@ -18,4 +18,4 @@
 package io.sapl.attributeapi.auth;
 
 @SuppressWarnings("unused")
-public record AttributeAPIUser(String id, String tenantId) {}
+public record AttributeAPIUser(String id, String pdpId) {}

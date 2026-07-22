@@ -24,17 +24,17 @@ import java.time.Duration;
 import java.util.List;
 
 public interface AttributeStore {
-    void publish(AttributeKey key, Value value, String tenantId);
+    void publish(AttributeKey key, Value value, String pdpId);
 
-    void publish(AttributeKey key, Value value, Duration ttl, String tenantId);
+    void publish(AttributeKey key, Value value, Duration ttl, String pdpId);
 
-    void remove(AttributeKey key, String tenantId);
+    void remove(AttributeKey key, String pdpId);
 
-    Long count(String tenantId);
+    Long count(String pdpId);
 
-    Value get(AttributeKey key, String tenantId);
+    Value get(AttributeKey key, String pdpId);
 
-    List<AttributeEntry> getAll(String tenantId, @Nullable Integer limit, @Nullable Integer offset);
+    List<AttributeEntry> getAll(String pdpId, @Nullable Integer limit, @Nullable Integer offset);
 
     void close();
 }

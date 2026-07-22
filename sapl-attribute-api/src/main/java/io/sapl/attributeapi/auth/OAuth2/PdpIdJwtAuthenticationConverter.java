@@ -25,21 +25,24 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
 
-public class TenantJwtAuthenticationConverter implements Converter<Jwt, AbstractAuthenticationToken> {
-    private static final String ERROR_MISSING_TENANT = "JWT token missing required claim: %s.";
+public class PdpIdJwtAuthenticationConverter implements Converter<Jwt, AbstractAuthenticationToken> {
+    private static final String ERROR_MISSING_PDP_ID = "JWT token missing required claim: %s.";
     // todo: make the claim configurable
+    // Claim name kept as "tenantId": it is an external contract with the
+    // issuing OIDC provider's token mapper configuration (see sapl-k8s/), not
+    // an internal identifier.
     private static final String CLAIM_NAME = "tenantId";
 
     @Override
     public AbstractAuthenticationToken convert(Jwt source) {
-        val tenantClaim = source.getClaimAsString(CLAIM_NAME);
-        val subject     = source.getSubject();
+        val pdpIdClaim = source.getClaimAsString(CLAIM_NAME);
+        val subject    = source.getSubject();
 
-        if (tenantClaim == null || tenantClaim.isBlank()) {
-            throw new InvalidBearerTokenException(ERROR_MISSING_TENANT.formatted(CLAIM_NAME));
+        if (pdpIdClaim == null || pdpIdClaim.isBlank()) {
+            throw new InvalidBearerTokenException(ERROR_MISSING_PDP_ID.formatted(CLAIM_NAME));
         }
 
-        var principal = new AttributeApiUserDetails(subject, null, tenantClaim);
+        var principal = new AttributeApiUserDetails(subject, null, pdpIdClaim);
 
         return UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities());
     }

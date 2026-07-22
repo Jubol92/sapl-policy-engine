@@ -20,7 +20,7 @@ package io.sapl.attributeapi.auth;
 import io.sapl.attributeapi.auth.ApiKey.ApiKeyAuthenticationFilter;
 import io.sapl.attributeapi.auth.ApiKey.ApiKeyAuthenticationProvider;
 import io.sapl.attributeapi.auth.ApiKey.ApiKeyAuthenticationService;
-import io.sapl.attributeapi.auth.OAuth2.TenantJwtAuthenticationConverter;
+import io.sapl.attributeapi.auth.OAuth2.PdpIdJwtAuthenticationConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -113,7 +113,7 @@ public class AttributeSecurityConfiguration {
         if (properties.isAllowOAuth2Auth()) {
             log.info("OAuth2 authentication activated");
 
-            var converter = new TenantJwtAuthenticationConverter();
+            var converter = new PdpIdJwtAuthenticationConverter();
             var decoder   = jwtDecoder();
 
             // API keys are also carried as "Authorization: Bearer sapl_..." - leave
