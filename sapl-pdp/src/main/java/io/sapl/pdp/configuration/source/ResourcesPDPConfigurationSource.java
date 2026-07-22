@@ -66,7 +66,7 @@ import java.util.function.Consumer;
  *
  * <p>
  * Since resources are static, this source loads configurations once on first
- * subscribe and emits a {@link ConfigurationEvent.Load} per discovered PDP.
+ * subscribe and emits a {@link ConfigurationEvent.NewConfiguration} per discovered PDP.
  * There is no hot-reloading from classpath resources.
  * </p>
  * <h2>Thread Safety</h2>
@@ -141,8 +141,8 @@ public final class ResourcesPDPConfigurationSource implements PDPConfigurationSo
         val normalizedPath = normalizeResourcePath(resourcePath);
         val scannedData    = scanResources(normalizedPath);
 
-        var loaded = emitRootConfiguration(normalizedPath, scannedData);
-        loaded += emitSubdirectoryConfigurations(normalizedPath, scannedData);
+        var loaded = emitRootConfiguration(scannedData);
+        loaded += emitSubdirectoryConfigurations(scannedData);
 
         log.info("Loaded {} PDP configurations from resources.", loaded);
         if (loaded == 0) {
@@ -151,9 +151,9 @@ public final class ResourcesPDPConfigurationSource implements PDPConfigurationSo
     }
 
     private void emit(PDPConfiguration configuration) {
-        // keepOldOnError=false: resources are static, no reload to recover.
-        // Compile errors propagate as exceptions through the subscriber call.
-        val event = new ConfigurationEvent.Load(configuration, false);
+        // Resources are static, so a compile error propagates as an exception
+        // through the subscriber call rather than being retained for reload.
+        val event = new ConfigurationEvent.NewConfiguration(configuration);
         for (val subscriber : subscribers) {
             subscriber.accept(event);
         }
@@ -196,20 +196,19 @@ public final class ResourcesPDPConfigurationSource implements PDPConfigurationSo
         }
     }
 
-    private int emitRootConfiguration(String normalizedPath, ScannedResourceData data) {
+    private int emitRootConfiguration(ScannedResourceData data) {
         if (data.rootPdpJson() == null && data.rootSaplFiles().isEmpty()) {
             return 0;
         }
 
-        val sourcePath    = "/" + normalizedPath;
         val defaultConfig = PDPConfigurationLoader.loadFromContent(data.rootPdpJson(), data.rootSaplFiles(),
-                StreamingPolicyDecisionPoint.DEFAULT_PDP_ID, sourcePath);
+                StreamingPolicyDecisionPoint.DEFAULT_PDP_ID, "root");
         emit(defaultConfig);
         log.debug("Loaded default PDP configuration with {} SAPL documents.", data.rootSaplFiles().size());
         return 1;
     }
 
-    private int emitSubdirectoryConfigurations(String normalizedPath, ScannedResourceData data) {
+    private int emitSubdirectoryConfigurations(ScannedResourceData data) {
         var count = 0;
 
         for (val entry : data.subDirectoryData().entrySet()) {
@@ -225,8 +224,7 @@ public final class ResourcesPDPConfigurationSource implements PDPConfigurationSo
             val saplFiles  = extractSaplFiles(subdirData);
 
             if (pdpJson != null || !saplFiles.isEmpty()) {
-                val sourcePath = "/" + normalizedPath + "/" + subdirName;
-                val config     = PDPConfigurationLoader.loadFromContent(pdpJson, saplFiles, subdirName, sourcePath);
+                val config = PDPConfigurationLoader.loadFromContent(pdpJson, saplFiles, subdirName, subdirName);
                 emit(config);
                 count++;
                 log.debug("Loaded PDP configuration '{}' with {} SAPL documents.", subdirName, saplFiles.size());

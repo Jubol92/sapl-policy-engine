@@ -36,13 +36,12 @@ import java.util.TreeMap;
  * <h2>Signing a Bundle</h2>
  *
  * <pre>{@code
- * // Prepare file contents
- * Map<String, String> files = Map.of("pdp.json",
- *         "{ \"algorithm\": { \"votingMode\": \"PRIORITY_DENY\", \"defaultDecision\": \"DENY\", \"errorHandling\": \"PROPAGATE\" } }",
- *         "policy.sapl", "policy \"test\" permit true");
+ * // Build the unsigned manifest
+ * BundleManifest unsigned = BundleManifest.builder().configurationId("release-77").attribution(attribution)
+ *         .addFile("pdp.json", pdpJson).addFile("policy.sapl", "policy \"test\" permit true").buildUnsigned();
  *
  * // Sign with Ed25519 private key
- * BundleManifest manifest = BundleSigner.sign(files, privateKey, "my-key-id");
+ * BundleManifest manifest = BundleSigner.sign(unsigned, privateKey, "my-key-id");
  * }</pre>
  *
  * <h2>Verifying a Bundle</h2>
@@ -79,13 +78,16 @@ public class BundleSigner {
     private static final String ERROR_SIGNATURE_VERIFICATION          = "Signature verification error: %s";
     private static final String ERROR_SIGNING_FAILED                  = "Signing failed: %s";
     private static final String ERROR_UNEXPECTED_FILE_IN_BUNDLE       = "Unexpected file in bundle not covered by signature: %s.";
+    private static final String ERROR_UNSUPPORTED_HASH_ALGORITHM      = "Unsupported hash algorithm: %s.";
     private static final String ERROR_UNSUPPORTED_SIGNATURE_ALGORITHM = "Unsupported signature algorithm: %s.";
 
     /**
-     * Signs bundle contents and creates a manifest with embedded signature.
+     * Signs a caller-built manifest and returns a copy with the embedded
+     * signature. The signature covers the canonical bytes of the manifest without
+     * its signature field.
      *
-     * @param files
-     * map of filename to file content
+     * @param unsignedManifest
+     * the manifest to sign
      * @param privateKey
      * Ed25519 private key for signing
      * @param keyId
@@ -96,21 +98,16 @@ public class BundleSigner {
      * @throws BundleSignatureException
      * if signing fails
      */
-    public static BundleManifest sign(Map<String, String> files, PrivateKey privateKey, String keyId) {
+    public static BundleManifest sign(BundleManifest unsignedManifest, PrivateKey privateKey, String keyId) {
         validatePrivateKey(privateKey);
 
-        val builder = BundleManifest.builder();
+        val manifestToSign  = unsignedManifest.withoutSignature();
+        val bytesToSign     = manifestToSign.toCanonicalBytes();
+        val signatureBytes  = createSignature(bytesToSign, privateKey);
+        val signatureBase64 = Base64.getEncoder().encodeToString(signatureBytes);
 
-        for (val entry : files.entrySet()) {
-            builder.addFile(entry.getKey(), entry.getValue());
-        }
-
-        val unsignedManifest = builder.buildUnsigned();
-        val bytesToSign      = unsignedManifest.toCanonicalBytes();
-        val signatureBytes   = createSignature(bytesToSign, privateKey);
-        val signatureBase64  = Base64.getEncoder().encodeToString(signatureBytes);
-
-        return builder.signature(keyId, signatureBase64).build();
+        return manifestToSign.withSignature(
+                new BundleManifest.Signature(BundleManifest.SIGNATURE_ALGORITHM, keyId, signatureBase64));
     }
 
     /**
@@ -195,6 +192,9 @@ public class BundleSigner {
         if (!BundleManifest.SIGNATURE_ALGORITHM.equals(manifest.signature().algorithm())) {
             throw new BundleSignatureException(
                     ERROR_UNSUPPORTED_SIGNATURE_ALGORITHM.formatted(manifest.signature().algorithm()));
+        }
+        if (!BundleManifest.HASH_ALGORITHM.equals(manifest.hashAlgorithm())) {
+            throw new BundleSignatureException(ERROR_UNSUPPORTED_HASH_ALGORITHM.formatted(manifest.hashAlgorithm()));
         }
         if (manifest.files() == null || manifest.files().isEmpty()) {
             throw new BundleSignatureException(ERROR_MANIFEST_NO_FILE_ENTRIES);

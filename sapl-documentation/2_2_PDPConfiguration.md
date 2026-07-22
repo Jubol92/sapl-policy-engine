@@ -33,13 +33,25 @@ Secrets are optional PDP-level credentials available to PIPs during evaluation. 
 
 PDP-level secrets are configured once and automatically available to all PIPs via the `AttributeAccessContext`.
 
+Secrets never live inside `pdp.json`. They are carried in a dedicated file next to it, and the file name states whether the content is sealed:
+
+- **`secrets.json`**: cleartext secrets, for development setups only.
+- **`secrets.sealed.json`**: sealed secrets. Every scalar leaf is replaced by an `ENC[...]` token encrypted to an X25519 recipient key, while the structure and key names stay readable. The recipient (the PDP, or the cluster sharing the key) restores the values at load time.
+
+```json
+{
+  "externalApiKey": "ENC[eyJhbGciOiJFQ0RILUVTIi...]"
+}
+```
+
+A directory or bundle never mixes cleartext and sealed secrets files. Either every secrets file is sealed or none is. A `pdp.json` containing an inline `secrets` section is rejected with an error pointing to the dedicated file. Use `sapl bundle seal` to seal a policy directory and `sapl bundle keygen-secrets` to generate the recipient keypair (see [SAPL Node](../7_0_SaplNode/)).
+
 ### The `pdp.json` Format
 
 In SAPL Node and bundle-based deployments, the PDP configuration is stored as a `pdp.json` file alongside policy documents:
 
 ```json
 {
-  "configurationId": "my-app-v1",
   "algorithm": {
     "votingMode": "PRIORITY_DENY",
     "defaultDecision": "DENY",
@@ -60,14 +72,11 @@ In SAPL Node and bundle-based deployments, the PDP configuration is stored as a 
       "initialTimeOutMs": 5000,
       "retries": 3
     }
-  },
-  "secrets": {
-    "externalApiKey": "sk-..."
   }
 }
 ```
 
-The `algorithm` object is optional. When absent, the PDP uses the default combining algorithm (`PRIORITY_DENY`, `DENY`, `PROPAGATE`). The `variables` and `secrets` sections are also optional.
+The `algorithm` object is optional. When absent, the PDP uses the default combining algorithm (`PRIORITY_DENY`, `DENY`, `PROPAGATE`). The `variables` section is also optional. Secrets are not part of `pdp.json` (see [Secrets](#secrets) above).
 
 The `compilerFlags` object is optional. All fields within it are optional and default to the values shown above:
 
@@ -80,6 +89,6 @@ The `compilerFlags` object is optional. All fields within it are optional and de
 
 The key `compilerOptions` is accepted as a synonym for `compilerFlags`; both name the same options object.
 
-The `configurationId` is a version identifier for the configuration. It appears in health endpoints and decision logs, enabling operators to correlate authorization decisions with the exact policy set that produced them. For bundles, this field is **required**. For directory and resource sources, it is optional and auto-generated from the source path and content hash when absent.
+The configuration id identifying a publication is not part of `pdp.json`. Since SAPL 4.2.0, a `pdp.json` containing a `configurationId` field is rejected fail-closed with a migration message: the configurationId moved to the bundle manifest and is derived from content for directory and resource sources. For bundles, the id is recorded in the signed `.sapl-manifest.json` (explicit or content-derived `bundle@<hash16>`). For directory sources, it is derived on every load as `dir:<dirName>@<hash16>`; for classpath resources as `res:<name>@<hash16>`; for embedded builder configurations as `embedded@<hash16>`. Identical content always yields the identical id. The id appears in health endpoints and decision logs, enabling operators to correlate authorization decisions with the exact publication that produced them.
 
 For deployment details, see [SAPL Node](../7_0_SaplNode/). For the bundle structure that packages `pdp.json` with policy documents, see [Bundle Wire Protocol](../7_5_BundleWireProtocol/).

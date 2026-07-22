@@ -111,7 +111,8 @@ class DirectoryPDPConfigurationSourceTests {
     }
 
     @Test
-    void whenPdpJsonHasConfigurationIdThenUsesExplicitId() throws IOException {
+    @DisplayName("a pdp.json still carrying configurationId is rejected with the migration message")
+    void whenPdpJsonHasConfigurationIdThenConfigurationErrorEmitted() throws IOException {
         createFile(tempDir.resolve("policy.sapl"), "policy \"test\" permit true;");
         createFile(tempDir.resolve("pdp.json"),
                 """
@@ -119,16 +120,11 @@ class DirectoryPDPConfigurationSourceTests {
                         """);
         source = new DirectoryPDPConfigurationSource(tempDir, "cultist");
 
-        val configs = captureConfigurations(source);
-
-        assertThat(configs.getFirst()).satisfies(config -> {
-            assertThat(config.pdpId()).isEqualTo("cultist");
-            assertThat(config.configurationId()).isEqualTo("eldritch-v1");
-        });
+        assertThat(captureConfigurations(source)).isEmpty();
     }
 
     @Test
-    void whenPdpJsonHasNoConfigurationIdThenAutoGeneratesId() throws IOException {
+    void whenLoadingDirectoryThenContentDerivedIdIsAssigned() throws IOException {
         writePdpJson(tempDir);
         createFile(tempDir.resolve("policy.sapl"), "policy \"test\" permit true;");
         source = new DirectoryPDPConfigurationSource(tempDir, "cultist");
@@ -137,7 +133,7 @@ class DirectoryPDPConfigurationSourceTests {
 
         assertThat(configs.getFirst()).satisfies(config -> {
             assertThat(config.pdpId()).isEqualTo("cultist");
-            assertThat(config.configurationId()).startsWith("dir:").doesNotContain("sha256");
+            assertThat(config.configurationId()).matches("^dir:[^@]+@[0-9a-f]{16}$");
         });
     }
 
@@ -198,6 +194,20 @@ class DirectoryPDPConfigurationSourceTests {
         source = new DirectoryPDPConfigurationSource(tempDir);
 
         assertThat(source.isClosed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a malformed pdp.json is reported as a configuration error, not a configuration")
+    void whenPdpJsonMalformedThenConfigurationErrorEmitted() throws IOException {
+        createFile(tempDir.resolve("pdp.json"), "{ this is not valid json");
+        createFile(tempDir.resolve("policy.sapl"), "policy \"p\" permit true;");
+        source = new DirectoryPDPConfigurationSource(tempDir);
+
+        val capture = new CapturingSubscriber();
+        source.subscribe(capture);
+
+        assertThat(capture.errors()).singleElement().satisfies(error -> assertThat(error.pdpId()).isEqualTo("default"));
+        assertThat(capture.configs()).isEmpty();
     }
 
     @Test
@@ -266,6 +276,24 @@ class DirectoryPDPConfigurationSourceTests {
 
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(configs).hasSizeGreaterThanOrEqualTo(2)
                 .last().satisfies(config -> assertThat(config.saplDocuments()).hasSize(2)));
+    }
+
+    @Test
+    @DisplayName("adding an extension file triggers a reload that carries the extension")
+    void whenExtensionFileAddedThenConfigurationCarriesExtension() throws IOException {
+        writePdpJson(tempDir);
+        createFile(tempDir.resolve("policy.sapl"), "policy \"test\" permit true;");
+        source = new DirectoryPDPConfigurationSource(tempDir);
+
+        val configs = captureConfigurations(source);
+
+        assertThat(configs).hasSize(1).first().satisfies(config -> assertThat(config.extensions()).isEmpty());
+
+        createFile(tempDir.resolve("ext-upstreams.json"), """
+                { "servers": [] }""");
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(configs).hasSizeGreaterThanOrEqualTo(2)
+                .last().satisfies(config -> assertThat(config.extensions()).containsKey("upstreams")));
     }
 
     @Test
