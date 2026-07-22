@@ -22,7 +22,6 @@ import com.hivemq.client.mqtt.mqtt5.Mqtt5BlockingClient;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5PayloadFormatIndicator;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
 import io.sapl.api.attributes.AttributeAccessContext;
-import io.sapl.api.model.ArrayValue;
 import io.sapl.api.model.ErrorValue;
 import io.sapl.api.model.NumberValue;
 import io.sapl.api.model.ObjectValue;
@@ -39,9 +38,11 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
 
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.sapl.api.model.ValueJsonMarshaller.json;
@@ -100,7 +101,7 @@ class MqttPolicyInformationPointIT {
                   ]
                 }
                 """.formatted(brokerHost, brokerPort, clientId));
-        val variables = ObjectValue.builder().put("mqttPipConfig", pipConfig).build();
+        val variables = ObjectValue.builder().put("mqtt", pipConfig).build();
         return new AttributeAccessContext(variables, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT);
     }
 
@@ -111,6 +112,8 @@ class MqttPolicyInformationPointIT {
     private static void publishLater(Mqtt5Publish message, long delayMs) {
         Thread.startVirtualThread(() -> {
             try {
+                // No condition to await: this thread produces a timed event, so the publish
+                // must really be deferred.
                 Thread.sleep(delayMs);
                 publisher.publish(message);
             } catch (InterruptedException ie) {
@@ -125,6 +128,56 @@ class MqttPolicyInformationPointIT {
                 .payload(json.getBytes(StandardCharsets.UTF_8)).build();
     }
 
+    private static AttributeAccessContext ctxForPort(int brokerPort) {
+        val pipConfig = json("""
+                {
+                  "defaultBrokerConfigName": "down",
+                  "emitAtRetry": "false",
+                  "brokerConfig": [
+                    { "name": "down", "brokerAddress": "%s", "brokerPort": %d, "clientId": "%s" }
+                  ]
+                }
+                """.formatted(brokerHost, brokerPort, "sapl-down-" + CLIENT_SEQ.incrementAndGet()));
+        val variables = ObjectValue.builder().put("mqtt", pipConfig).build();
+        return new AttributeAccessContext(variables, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT);
+    }
+
+    @Test
+    @DisplayName("an unreachable broker yields an error value and the failed client is evicted from the cache by the failure path, not leaked until close")
+    void whenBrokerUnreachableThenErrorValueAndCacheEvicted() throws Exception {
+        final int closedPort;
+        try (val probe = new ServerSocket(0)) {
+            closedPort = probe.getLocalPort();
+        } // closed here: the port is now free, so a connect attempt is refused
+
+        val before   = saplMqttClient.cache().size();
+        val sawError = new AtomicBoolean(false);
+        val stream   = pip.messages(Value.of("test/unreachable"), ctxForPort(closedPort));
+        val drainer  = Thread.startVirtualThread(() -> {
+                         try {
+                             Value value;
+                             while ((value = stream.awaitNext()) != null) {
+                                 if (value instanceof ErrorValue) {
+                                     sawError.set(true);
+                                 }
+                             }
+                         } catch (InterruptedException e) {
+                             Thread.currentThread().interrupt();
+                         }
+                     });
+        try {
+            // The connect refusal drives the failure path, which emits an error
+            // and releases the cache entry without waiting for the stream close.
+            Awaitility.await().atMost(Duration.ofSeconds(25)).untilAsserted(() -> {
+                assertThat(sawError).isTrue();
+                assertThat(saplMqttClient.cache()).hasSize(before);
+            });
+        } finally {
+            stream.close();
+            drainer.interrupt();
+        }
+    }
+
     @Nested
     @DisplayName("Happy path")
     class HappyPath {
@@ -133,10 +186,11 @@ class MqttPolicyInformationPointIT {
         @DisplayName("subscribe + publish: a published message arrives as a TextValue")
         void whenMessagePublishedThenStreamEmitsIt() {
             val topic   = "test/happy/text";
-            val message = buildMqttPublishMessage(topic, "hello", false);
+            val message = buildMqttPublishMessage(topic, "hello", true);
 
+            // Retained publish before subscribing so delivery does not race the subscribe.
+            publisher.publish(message);
             try (val stream = pip.messages(Value.of(topic), freshCtx())) {
-                publishLater(message, 500L);
                 StreamAssertions.assertThat(stream).withinTimeout(Duration.ofSeconds(10))
                         .awaitsNext(v -> assertThat(v).isInstanceOf(TextValue.class).isEqualTo(Value.of("hello")));
             }
@@ -204,8 +258,8 @@ class MqttPolicyInformationPointIT {
         }
 
         @Test
-        @DisplayName("non-UTF-8 binary payload becomes ArrayValue of bytes")
-        void whenBinaryPayloadThenArrayOfBytes() {
+        @DisplayName("non-UTF-8 binary payload becomes an error value")
+        void whenBinaryPayloadThenErrorValue() {
             val topic       = "test/payload/binary";
             val invalidUtf8 = new byte[] { (byte) 0xFF, (byte) 0xFE, (byte) 0xFD };
             val message     = Mqtt5Publish.builder().topic(topic).qos(MqttQos.AT_MOST_ONCE).payload(invalidUtf8)
@@ -214,7 +268,8 @@ class MqttPolicyInformationPointIT {
             try (val stream = pip.messages(Value.of(topic), freshCtx())) {
                 publishLater(message, 500L);
                 StreamAssertions.assertThat(stream).withinTimeout(Duration.ofSeconds(10))
-                        .awaitsNext(v -> assertThat(v).isInstanceOf(ArrayValue.class));
+                        .awaitsNext(v -> assertThat(v).isInstanceOfSatisfying(ErrorValue.class,
+                                error -> assertThat(error.message()).contains("binary")));
             }
         }
     }
@@ -229,14 +284,14 @@ class MqttPolicyInformationPointIT {
                       "defaultBrokerConfigName": "production",
                       "emitAtRetry": "false",
                       "defaultResponse": "%s",
-                      "timeoutDuration": %d,
+                      "defaultResponseTimeout": %d,
                       "brokerConfig": [
                         { "name": "production", "brokerAddress": "%s", "brokerPort": %d, "clientId": "%s" }
                       ]
                     }
                     """.formatted(type, timeoutMs, brokerHost, brokerPort,
                     "sapl-pip-default-" + CLIENT_SEQ.incrementAndGet()));
-            val variables = ObjectValue.builder().put("mqttPipConfig", pipConfig).build();
+            val variables = ObjectValue.builder().put("mqtt", pipConfig).build();
             return new AttributeAccessContext(variables, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT);
         }
 
@@ -308,7 +363,7 @@ class MqttPolicyInformationPointIT {
     class ErrorPaths {
 
         @Test
-        @DisplayName("missing mqttPipConfig yields an error stream")
+        @DisplayName("missing mqtt config yields an error stream")
         void whenNoMqttPipConfigThenErrorValue() {
             val emptyCtx = new AttributeAccessContext(Value.EMPTY_OBJECT, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT);
 
@@ -327,13 +382,13 @@ class MqttPolicyInformationPointIT {
                     {
                       "defaultBrokerConfigName": "ghost",
                       "emitAtRetry": "false",
-                      "timeoutDuration": 30000,
+                      "defaultResponseTimeout": 30000,
                       "brokerConfig": [
                         { "name": "ghost", "brokerAddress": "127.0.0.1", "brokerPort": 1, "clientId": "ghost-client" }
                       ]
                     }
                     """);
-            val variables = ObjectValue.builder().put("mqttPipConfig", pipConfig).build();
+            val variables = ObjectValue.builder().put("mqtt", pipConfig).build();
             val ctx       = new AttributeAccessContext(variables, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT);
 
             try (val stream = pip.messages(Value.of("any/topic"), ctx)) {
@@ -350,29 +405,53 @@ class MqttPolicyInformationPointIT {
         @Test
         @DisplayName("two streams subscribing to the same broker share one client cache entry")
         void whenTwoStreamsOnSameBrokerThenCacheEntryShared() {
-            val ctx = freshCtx();
+            // Both subscriptions must be alive at the same time for connection
+            // sharing to be observable. A default-response context makes each
+            // stream emit a deterministic UNDEFINED placeholder once subscribed,
+            // so awaitsNext registers the subscriber without closing the stream.
+            val ctx = sharedBrokerCtxWithDefaultResponse();
             try (val s1 = pip.messages(Value.of("test/share/a"), ctx)) {
-                StreamAssertions.assertThat(s1).withinTimeout(Duration.ofMillis(500)).drain();
-                int sizeWithOne = SaplMqttClient.MQTT_CLIENT_CACHE.size();
+                StreamAssertions.assertThat(s1).withinTimeout(Duration.ofSeconds(5))
+                        .awaitsNext(v -> assertThat(v).isEqualTo(Value.UNDEFINED));
+                val sizeWithOne = saplMqttClient.cache().size();
                 try (val s2 = pip.messages(Value.of("test/share/b"), ctx)) {
-                    StreamAssertions.assertThat(s2).withinTimeout(Duration.ofMillis(500)).drain();
-                    val sizeWithTwo = SaplMqttClient.MQTT_CLIENT_CACHE.size();
+                    StreamAssertions.assertThat(s2).withinTimeout(Duration.ofSeconds(5))
+                            .awaitsNext(v -> assertThat(v).isEqualTo(Value.UNDEFINED));
+                    // s1 and s2 are both still open here. Adding a second subscriber
+                    // to the same broker must not create a second cache entry.
+                    val sizeWithTwo = saplMqttClient.cache().size();
                     assertThat(sizeWithTwo).isEqualTo(sizeWithOne);
                 }
             }
+        }
+
+        private static AttributeAccessContext sharedBrokerCtxWithDefaultResponse() {
+            val pipConfig = json("""
+                    {
+                      "defaultBrokerConfigName": "production",
+                      "emitAtRetry": "false",
+                      "defaultResponse": "undefined",
+                      "defaultResponseTimeout": 300,
+                      "brokerConfig": [
+                        { "name": "production", "brokerAddress": "%s", "brokerPort": %d, "clientId": "%s" }
+                      ]
+                    }
+                    """.formatted(brokerHost, brokerPort, "sapl-pip-share-" + CLIENT_SEQ.incrementAndGet()));
+            val variables = ObjectValue.builder().put("mqtt", pipConfig).build();
+            return new AttributeAccessContext(variables, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT);
         }
 
         @Test
         @DisplayName("when last subscriber closes the broker entry is evicted from the cache")
         void whenLastSubscriberClosesThenCacheEntryEvicted() {
             val ctx    = freshCtx();
-            val before = SaplMqttClient.MQTT_CLIENT_CACHE.size();
+            val before = saplMqttClient.cache().size();
             try (val s = pip.messages(Value.of("test/eviction/topic"), ctx)) {
                 StreamAssertions.assertThat(s).withinTimeout(Duration.ofSeconds(3)).drain();
-                assertThat(SaplMqttClient.MQTT_CLIENT_CACHE).hasSizeGreaterThanOrEqualTo(before);
+                assertThat(saplMqttClient.cache()).hasSizeGreaterThanOrEqualTo(before);
             }
             Awaitility.await().atMost(Duration.ofSeconds(5))
-                    .untilAsserted(() -> assertThat(SaplMqttClient.MQTT_CLIENT_CACHE).hasSize(before));
+                    .untilAsserted(() -> assertThat(saplMqttClient.cache()).hasSize(before));
         }
     }
 }

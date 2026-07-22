@@ -55,8 +55,7 @@ public class AttributeRepositoryFactory {
         return switch (type != null ? type : "") {
 
         case "postgres" -> {
-            val cf = ConnectionFactories.get(ConnectionFactoryOptions.builder()
-                    .option(DRIVER, "postgresql")
+            val cf = ConnectionFactories.get(ConnectionFactoryOptions.builder().option(DRIVER, "postgresql")
                     .option(HOST, Objects.requireNonNull(str(config, "host"))).option(PORT, num(config, "port"))
                     .option(USER, Objects.requireNonNull(str(config, "username")))
                     .option(PASSWORD, Objects.requireNonNull(str(config, "password")))
@@ -65,15 +64,17 @@ public class AttributeRepositoryFactory {
             yield new PostgresAttributeRepository(DatabaseClient.create(cf), cf, pdpId);
         }
 
-        case "mongo"    -> {
+        case "mongo" -> {
             val host     = str(config, "host");
             val port     = num(config, "port");
             val database = str(config, "database");
             val username = str(config, "username");
             val password = str(config, "password");
             val authDb   = str(config, "authDatabase");
-            val creds    = username == null || username.isBlank() ? "" : encode(username) + ":" + encode(password) + "@";
-            val auth     = username == null || username.isBlank() ? "" : "?authSource=" + (authDb != null ? authDb : database);
+            val creds    = username == null || username.isBlank() ? ""
+                    : encode(username) + ":" + encode(password) + "@";
+            val auth     = username == null || username.isBlank() ? ""
+                    : "?authSource=" + (authDb != null ? authDb : database);
             val cs       = new ConnectionString("mongodb://" + creds + host + ":" + port + "/" + database + auth);
 
             yield new MongoAttributeRepository(
@@ -81,7 +82,7 @@ public class AttributeRepositoryFactory {
                     pdpId);
         }
 
-        case "redis"    -> {
+        case "redis" -> {
             val host     = str(config, "host");
             val port     = num(config, "port");
             val password = str(config, "password");
@@ -95,7 +96,7 @@ public class AttributeRepositoryFactory {
             yield new RedisAttributeRepository(RedisClient.create(builder.build()), pdpId);
         }
 
-        default         -> new InMemoryAttributeRepository();
+        default -> new InMemoryAttributeRepository();
         };
     }
 

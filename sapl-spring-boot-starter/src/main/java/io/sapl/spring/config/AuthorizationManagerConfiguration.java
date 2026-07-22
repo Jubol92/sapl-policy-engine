@@ -46,25 +46,26 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Deploys the SAPL HTTP enforcement infrastructure. Servlet runtime gets the
- * blocking authorization manager, access-denied handler, and HTTP PEP filter
- * via {@link Servlet}; reactive runtime gets the non-blocking equivalents
+ * blocking authorization manager,
+ * access-denied handler, and HTTP PEP filter via {@link Servlet}; reactive
+ * runtime gets the non-blocking equivalents
  * via {@link Reactive}. Each inner configuration is gated at class level by
- * {@link ConditionalOnWebApplication} so that servlet types are not loaded
- * when only WebFlux is on the classpath, and vice versa. Both runtimes
- * share the same {@link EnforcementPlanner} bean defined by the
- * method-security configuration.
+ * {@link ConditionalOnWebApplication} so that
+ * servlet types are not loaded when only WebFlux is on the classpath, and vice
+ * versa. Both runtimes share the same
+ * {@link EnforcementPlanner} bean defined by the method-security configuration.
  * <p>
- * Users opt SAPL into {@code HttpSecurity} or {@code ServerHttpSecurity}
- * via the dedicated configurer that the corresponding inner class
- * documents. The configurers are not auto-applied; the user calls them
- * explicitly.
+ * Users opt SAPL into {@code HttpSecurity} or {@code ServerHttpSecurity} via
+ * the dedicated configurer that the
+ * corresponding inner class documents. The configurers are not auto-applied.
+ * The user calls them explicitly.
  */
 @Slf4j
 @AutoConfiguration
 public final class AuthorizationManagerConfiguration {
 
     private AuthorizationManagerConfiguration() {
-        // Holder for inner @Configuration classes; never instantiated.
+        // Holder for inner @Configuration classes. Never instantiated.
     }
 
     @Configuration(proxyBeanMethods = false)

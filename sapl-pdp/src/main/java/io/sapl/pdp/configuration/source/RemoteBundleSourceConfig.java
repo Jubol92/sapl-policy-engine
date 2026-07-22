@@ -19,8 +19,11 @@ package io.sapl.pdp.configuration.source;
 
 import io.sapl.pdp.configuration.PDPConfigurationException;
 import io.sapl.pdp.configuration.bundle.BundleSecurityPolicy;
+import lombok.extern.slf4j.Slf4j;
+import lombok.val;
 import org.jspecify.annotations.Nullable;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +51,8 @@ import java.util.Objects;
  * optional HTTP header name for authentication (e.g., {@code Authorization})
  * @param authHeaderValue
  * optional HTTP header value for authentication (e.g., {@code Bearer <token>})
+ * @param allowInsecureHttp
+ * whether authentication credentials may be sent over plaintext HTTP
  * @param followRedirects
  * whether to follow HTTP 3xx redirects
  * @param securityPolicy
@@ -59,6 +64,7 @@ import java.util.Objects;
  * @param maxBackoff
  * maximum backoff duration after repeated failures
  */
+@Slf4j
 public record RemoteBundleSourceConfig(
         String baseUrl,
         List<String> pdpIds,
@@ -67,6 +73,7 @@ public record RemoteBundleSourceConfig(
         Duration longPollTimeout,
         @Nullable String authHeaderName,
         @Nullable String authHeaderValue,
+        boolean allowInsecureHttp,
         boolean followRedirects,
         BundleSecurityPolicy securityPolicy,
         Map<String, Duration> pdpIdPollIntervals,
@@ -75,10 +82,17 @@ public record RemoteBundleSourceConfig(
 
     private static final String ERROR_AUTH_HEADER_INCOMPLETE = "Both authHeaderName and authHeaderValue must be provided together, or both must be null.";
     private static final String ERROR_BASE_URL_BLANK = "baseUrl must not be null or blank.";
+    private static final String ERROR_BASE_URL_INVALID = "baseUrl must be a valid URI.";
+    private static final String ERROR_BASE_URL_USERINFO = "baseUrl must not contain URI userinfo.";
     private static final String ERROR_FIRST_BACKOFF_NON_POSITIVE = "firstBackoff must be positive.";
+    private static final String ERROR_INSECURE_CREDENTIAL_TRANSPORT = "Remote bundle credentials require https. Credentials over plaintext http are refused unless allowInsecureHttp is true.";
+    private static final String ERROR_LONG_POLL_TIMEOUT_NON_POSITIVE = "longPollTimeout must be positive.";
     private static final String ERROR_MAX_BACKOFF_NON_POSITIVE = "maxBackoff must be positive.";
+    private static final String ERROR_PDP_ID_POLL_INTERVAL_NON_POSITIVE = "pdpIdPollIntervals for pdpId '%s' must be positive.";
+    private static final String ERROR_PDP_ID_POLL_INTERVAL_UNKNOWN_ID = "pdpIdPollIntervals contains unknown pdpId '%s'.";
     private static final String ERROR_PDP_IDS_EMPTY = "pdpIds must not be null or empty.";
     private static final String ERROR_POLL_INTERVAL_NON_POSITIVE = "pollInterval must be positive.";
+    private static final String WARN_CREDENTIALS_OVER_PLAINTEXT = "Bundle source sends an authentication credential to '{}' over an unencrypted (http) connection because allowInsecureHttp is true. The credential travels in cleartext and can be read by anything on the network path.";
 
     /**
      * Change detection mode for remote bundle fetching.
@@ -97,15 +111,20 @@ public record RemoteBundleSourceConfig(
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new PDPConfigurationException(ERROR_BASE_URL_BLANK);
         }
+        rejectUserInfo(baseUrl);
         if (pdpIds == null || pdpIds.isEmpty()) {
             throw new PDPConfigurationException(ERROR_PDP_IDS_EMPTY);
         }
+        pdpIds.forEach(PdpIdValidator::validatePdpId);
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(pollInterval, "pollInterval");
         Objects.requireNonNull(longPollTimeout, "longPollTimeout");
         Objects.requireNonNull(securityPolicy, "securityPolicy");
         if (pollInterval.isNegative() || pollInterval.isZero()) {
             throw new PDPConfigurationException(ERROR_POLL_INTERVAL_NON_POSITIVE);
+        }
+        if (longPollTimeout.isNegative() || longPollTimeout.isZero()) {
+            throw new PDPConfigurationException(ERROR_LONG_POLL_TIMEOUT_NON_POSITIVE);
         }
         if (firstBackoff == null || firstBackoff.isNegative() || firstBackoff.isZero()) {
             throw new PDPConfigurationException(ERROR_FIRST_BACKOFF_NON_POSITIVE);
@@ -116,8 +135,92 @@ public record RemoteBundleSourceConfig(
         if ((authHeaderName == null) == (authHeaderValue != null)) {
             throw new PDPConfigurationException(ERROR_AUTH_HEADER_INCOMPLETE);
         }
-        pdpIds             = List.copyOf(pdpIds);
-        pdpIdPollIntervals = pdpIdPollIntervals != null ? Map.copyOf(pdpIdPollIntervals) : Map.of();
+        if (authHeaderValue != null) {
+            enforceCredentialTransportSecurity(baseUrl, allowInsecureHttp);
+        }
+        pdpIds = List.copyOf(pdpIds);
+        if (pdpIdPollIntervals == null) {
+            pdpIdPollIntervals = Map.of();
+        } else {
+            validatePdpIdPollIntervals(pdpIds, pdpIdPollIntervals);
+            pdpIdPollIntervals = Map.copyOf(pdpIdPollIntervals);
+        }
+    }
+
+    public RemoteBundleSourceConfig(String baseUrl,
+            List<String> pdpIds,
+            FetchMode mode,
+            Duration pollInterval,
+            Duration longPollTimeout,
+            @Nullable String authHeaderName,
+            @Nullable String authHeaderValue,
+            boolean followRedirects,
+            BundleSecurityPolicy securityPolicy,
+            Map<String, Duration> pdpIdPollIntervals,
+            Duration firstBackoff,
+            Duration maxBackoff) {
+        this(baseUrl, pdpIds, mode, pollInterval, longPollTimeout, authHeaderName, authHeaderValue, false,
+                followRedirects, securityPolicy, pdpIdPollIntervals, firstBackoff, maxBackoff);
+    }
+
+    // Redacts the credential so it never reaches logs, dumps, or exception
+    // messages.
+    @Override
+    public String toString() {
+        return "RemoteBundleSourceConfig[baseUrl=" + baseUrl + ", pdpIds=" + pdpIds + ", mode=" + mode
+                + ", pollInterval=" + pollInterval + ", longPollTimeout=" + longPollTimeout + ", authHeaderName="
+                + authHeaderName + ", authHeaderValue=" + (authHeaderValue == null ? null : "REDACTED")
+                + ", allowInsecureHttp=" + allowInsecureHttp + ", followRedirects=" + followRedirects
+                + ", securityPolicy=" + securityPolicy + ", pdpIdPollIntervals=" + pdpIdPollIntervals
+                + ", firstBackoff=" + firstBackoff + ", maxBackoff=" + maxBackoff + "]";
+    }
+
+    /**
+     * True when a credential sent to {@code baseUrl} would travel in cleartext.
+     * That is the case when the URL does not use https.
+     */
+    static boolean credentialIsExposed(String baseUrl) {
+        return !isEncryptedBaseUrl(baseUrl);
+    }
+
+    private static void enforceCredentialTransportSecurity(String baseUrl, boolean allowInsecureHttp) {
+        if (!credentialIsExposed(baseUrl)) {
+            return;
+        }
+        if (!allowInsecureHttp) {
+            throw new PDPConfigurationException(ERROR_INSECURE_CREDENTIAL_TRANSPORT);
+        }
+        log.warn(WARN_CREDENTIALS_OVER_PLAINTEXT, baseUrl);
+    }
+
+    private static void rejectUserInfo(String baseUrl) {
+        try {
+            val uri = URI.create(baseUrl);
+            if (uri.getRawUserInfo() != null) {
+                throw new PDPConfigurationException(ERROR_BASE_URL_USERINFO);
+            }
+        } catch (IllegalArgumentException e) {
+            throw new PDPConfigurationException(ERROR_BASE_URL_INVALID, e);
+        }
+    }
+
+    private static boolean isEncryptedBaseUrl(String baseUrl) {
+        if (baseUrl == null) {
+            return false;
+        }
+        return baseUrl.regionMatches(true, 0, "https://", 0, "https://".length());
+    }
+
+    private static void validatePdpIdPollIntervals(List<String> pdpIds, Map<String, Duration> intervals) {
+        for (val entry : intervals.entrySet()) {
+            if (!pdpIds.contains(entry.getKey())) {
+                throw new PDPConfigurationException(ERROR_PDP_ID_POLL_INTERVAL_UNKNOWN_ID.formatted(entry.getKey()));
+            }
+            val interval = entry.getValue();
+            if (interval == null || interval.isNegative() || interval.isZero()) {
+                throw new PDPConfigurationException(ERROR_PDP_ID_POLL_INTERVAL_NON_POSITIVE.formatted(entry.getKey()));
+            }
+        }
     }
 
 }

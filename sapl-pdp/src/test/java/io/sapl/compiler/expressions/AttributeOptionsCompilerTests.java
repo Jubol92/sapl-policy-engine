@@ -29,13 +29,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.MockedStatic;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.stream.Stream;
 
 import static io.sapl.compiler.expressions.AttributeCompiler.*;
 import static io.sapl.util.SaplTesting.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 import static org.mockito.Mockito.mockStatic;
@@ -206,9 +210,43 @@ class AttributeOptionsCompilerTests {
                     arguments("zero initialTimeOutMs", OPTION_INITIAL_TIMEOUT, Value.of(0L), "initialTimeOutMs"),
                     arguments("negative initialTimeOutMs", OPTION_INITIAL_TIMEOUT, Value.of(-1L), "initialTimeOutMs"),
                     arguments("zero pollIntervalMs", OPTION_POLL_INTERVAL, Value.of(0L), "pollIntervalMs"),
-                    arguments("negative pollIntervalMs", OPTION_POLL_INTERVAL, Value.of(-1L), "pollIntervalMs"),
-                    arguments("zero backoffMs", OPTION_BACKOFF, Value.of(0L), "backoffMs"),
-                    arguments("negative backoffMs", OPTION_BACKOFF, Value.of(-1L), "backoffMs"));
+                    arguments("negative pollIntervalMs", OPTION_POLL_INTERVAL, Value.of(-1L), "pollIntervalMs"));
+        }
+    }
+
+    @Nested
+    @DisplayName("when backoffMs is below the minimum")
+    class WhenBackoffBelowMinimum {
+
+        @ValueSource(longs = { -1L, 0L, 1L, 49L })
+        @ParameterizedTest(name = "backoffMs={0}")
+        @DisplayName("a sub-minimum retry backoff is rejected so a misconfiguration cannot hammer a failing PIP")
+        void throwsException(long backoffMs) {
+            val options = ObjectValue.builder().put(OPTION_BACKOFF, Value.of(backoffMs)).build();
+            val expr    = new Literal(options, TEST_LOCATION);
+            val ctx     = compilationContext();
+
+            try (MockedStatic<ExpressionCompiler> mockedCompiler = mockStatic(ExpressionCompiler.class)) {
+                mockedCompiler.when(() -> ExpressionCompiler.compile(expr, ctx)).thenReturn(options);
+
+                assertThatThrownBy(() -> AttributeCompiler.compileOptions(expr, ctx))
+                        .isInstanceOf(SaplCompilerException.class).hasMessageContaining("backoffMs")
+                        .hasMessageContaining("at least " + MIN_BACKOFF_MS);
+            }
+        }
+
+        @Test
+        @DisplayName("a backoff at exactly the minimum is accepted")
+        void whenBackoffAtMinimumThenAccepted() {
+            val options = ObjectValue.builder().put(OPTION_BACKOFF, Value.of(MIN_BACKOFF_MS)).build();
+            val expr    = new Literal(options, TEST_LOCATION);
+            val ctx     = compilationContext();
+
+            try (MockedStatic<ExpressionCompiler> mockedCompiler = mockStatic(ExpressionCompiler.class)) {
+                mockedCompiler.when(() -> ExpressionCompiler.compile(expr, ctx)).thenReturn(options);
+
+                assertThatCode(() -> AttributeCompiler.compileOptions(expr, ctx)).doesNotThrowAnyException();
+            }
         }
     }
 
@@ -245,6 +283,36 @@ class AttributeOptionsCompilerTests {
                 val result = AttributeCompiler.compileOptions(expr, ctx);
                 assertThat(((ObjectValue) result).get(OPTION_RETRIES)).isEqualTo(Value.of(0L));
             }
+        }
+    }
+
+    @Nested
+    @DisplayName("when a numeric option is not a whole millisecond/count value")
+    class WhenNumericOptionIsNotIntegral {
+
+        @MethodSource
+        @ParameterizedTest(name = "{0}")
+        @DisplayName("a fractional or out-of-range numeric option is rejected rather than silently truncated")
+        void throwsException(String description, String optionKey, Value badValue) {
+            val options = ObjectValue.builder().put(optionKey, badValue).build();
+            val expr    = new Literal(options, TEST_LOCATION);
+            val ctx     = compilationContext();
+
+            try (MockedStatic<ExpressionCompiler> mockedCompiler = mockStatic(ExpressionCompiler.class)) {
+                mockedCompiler.when(() -> ExpressionCompiler.compile(expr, ctx)).thenReturn(options);
+
+                assertThatThrownBy(() -> AttributeCompiler.compileOptions(expr, ctx))
+                        .isInstanceOf(SaplCompilerException.class).hasMessageContaining(optionKey);
+            }
+        }
+
+        static Stream<Arguments> throwsException() {
+            val outOfRange = new BigDecimal(BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE));
+            return Stream.of(
+                    arguments("fractional initialTimeOutMs", OPTION_INITIAL_TIMEOUT, Value.of(new BigDecimal("2.5"))),
+                    arguments("fractional pollIntervalMs", OPTION_POLL_INTERVAL, Value.of(new BigDecimal("1.5"))),
+                    arguments("fractional retries", OPTION_RETRIES, Value.of(new BigDecimal("2.5"))),
+                    arguments("out-of-long-range initialTimeOutMs", OPTION_INITIAL_TIMEOUT, Value.of(outOfRange)));
         }
     }
 

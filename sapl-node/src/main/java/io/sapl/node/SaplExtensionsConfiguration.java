@@ -26,7 +26,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import io.sapl.api.functions.FunctionLibraryProvider;
-import io.sapl.api.stream.BlockingWebClient;
+import io.sapl.attributes.http.BlockingWebClient;
 import io.sapl.api.stream.RealTimeScheduler;
 import io.sapl.api.stream.TimeScheduler;
 import io.sapl.extensions.mqtt.MqttFunctionLibrary;
@@ -59,9 +59,9 @@ class SaplExtensionsConfiguration {
     }
 
     @Bean
-    BlockingWebClient blockingWebClient(JsonMapper mapper, Clock clock, TimeScheduler scheduler) {
+    BlockingWebClient blockingWebClient(JsonMapper mapper) {
         val httpClient = HttpClient.newBuilder().connectTimeout(HTTP_CONNECT_TIMEOUT).build();
-        return new BlockingWebClient(mapper, httpClient, clock, scheduler);
+        return new BlockingWebClient(mapper, httpClient);
     }
 
     @Bean

@@ -21,12 +21,15 @@ import io.sapl.api.functions.FunctionBroker;
 import io.sapl.api.pdp.DecisionInterceptor;
 import io.sapl.api.pdp.SubscriptionLifecycleListener;
 import io.sapl.attributes.broker.AttributeBroker;
+import io.sapl.attributes.broker.AttributeRepository;
 import io.sapl.pdp.configuration.PdpVoterSource;
 import io.sapl.pdp.configuration.source.PDPConfigurationSource;
+import io.sapl.pdp.plugins.PluginsSource;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.jspecify.annotations.Nullable;
 
+import java.time.InstantSource;
 import java.util.List;
 
 /**
@@ -52,9 +55,13 @@ public record PDPComponents(
         FunctionBroker functionBroker,
         AttributeBroker attributeBroker,
         @Nullable PDPConfigurationSource source,
-        LazyFastClock timestampClock,
+        InstantSource timestampSource,
+        boolean ownsTimestampSource,
         List<DecisionInterceptor> decisionInterceptors,
-        List<SubscriptionLifecycleListener> lifecycleListeners) implements AutoCloseable {
+        List<SubscriptionLifecycleListener> lifecycleListeners,
+        @Nullable PluginsSource pluginsSource,
+        boolean ownsPluginsSource,
+        @Nullable AttributeRepository ownedRepository) implements AutoCloseable {
 
     private static final String WARN_ERROR_CLOSING_RESOURCE = "Error closing {}: {}";
 
@@ -66,8 +73,22 @@ public record PDPComponents(
      */
     @Override
     public void close() {
-        closeAll(timestampClock, source, pdpVoterSource, attributeBroker, functionBroker, decisionInterceptors,
-                lifecycleListeners);
+        // Close the timestamp source only when owned. A caller-supplied source is the
+        // caller's to close.
+        if (ownsTimestampSource) {
+            closeQuietly(timestampSource);
+        }
+        closeAll(source, pdpVoterSource, attributeBroker, functionBroker, decisionInterceptors, lifecycleListeners);
+        // Builder-owned only. A withPluginsSource source stays caller-owned.
+        if (ownsPluginsSource) {
+            closeQuietly(pluginsSource);
+        }
+        // Builder-created default repository only. A withRepository or
+        // withAttributeBroker
+        // repository stays caller-owned (ownedRepository is null then). Closing it
+        // shuts
+        // down its scheduler, otherwise that thread leaks for the PDP's lifetime.
+        closeQuietly(ownedRepository);
     }
 
     private static void closeAll(Object... resources) {

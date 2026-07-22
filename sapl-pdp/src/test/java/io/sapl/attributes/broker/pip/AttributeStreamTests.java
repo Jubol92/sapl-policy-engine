@@ -61,12 +61,24 @@ class AttributeStreamTests {
 
     private static AttributeFinderInvocation invocation(String name, Duration initialTimeOut, Duration pollInterval,
             Duration backoff, long retries) {
-        return new AttributeFinderInvocation("default", "test." + name, List.of(), initialTimeOut, pollInterval,
-                backoff, retries, false, EMPTY_CONTEXT);
+        return new AttributeFinderInvocation("test-pdp", "default", "test." + name, List.of(), initialTimeOut,
+                pollInterval, backoff, retries, false, EMPTY_CONTEXT);
     }
 
     private static Value valueOrNull(Poll<Value> poll) {
         return poll instanceof Poll.Value(Value v) ? v : null;
+    }
+
+    @Test
+    @DisplayName("backoff stays non-negative and bounded across all retry indices")
+    void whenRetryIndexGrowsThenBackoffNeverOverflows() {
+        val base     = Duration.ofMillis(1000);
+        val maxDelay = Duration.ofMinutes(90);
+        for (int retryIndex = 0; retryIndex <= 64; retryIndex++) {
+            val delay = AttributeStream.jitteredBackoff(base, retryIndex);
+            assertThat(delay).as("retryIndex %d", retryIndex).isGreaterThanOrEqualTo(Duration.ZERO)
+                    .isLessThanOrEqualTo(maxDelay);
+        }
     }
 
     @Nested
@@ -204,6 +216,54 @@ class AttributeStreamTests {
                 assertThat(recovered).isEqualTo(Value.of("supplier-ok"));
             }
         }
+
+        @Test
+        @org.junit.jupiter.api.Timeout(10)
+        @DisplayName("an Error that escapes the retry guard does not kill the pump: error value published, then recovery")
+        void whenSupplierThrowsErrorThenPumpSurvivesAndRecovers() throws Exception {
+            val                     attempts = new AtomicInteger();
+            Supplier<Stream<Value>> source   = () -> {
+                                                 if (attempts.getAndIncrement() == 0) {
+                                                     // attemptWithRetries does not catch Error, so the immortal pump
+                                                     // guard must contain it.
+                                                     throw new AssertionError("pump-error");
+                                                 }
+                                                 val good = new ScriptedStream();
+                                                 good.emit(Value.of("recovered"));
+                                                 good.complete();
+                                                 return good;
+                                             };
+
+            try (val stream = new AttributeStream(invocation("pumpError", INITIAL_TIMEOUT, POLL_INTERVAL, BACKOFF, 1L),
+                    source)) {
+
+                assertThat(stream.awaitNext()).isInstanceOf(ErrorValue.class);
+                assertThat(stream.awaitNext()).isEqualTo(Value.of("recovered"));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("inner stream interrupt")
+    class InnerStreamInterrupt {
+
+        @Test
+        @org.junit.jupiter.api.Timeout(10)
+        @DisplayName("an untrusted inner stream that throws InterruptedException while the AttributeStream is open is "
+                + "treated as a transient failure: the pump recovers and delivers the next cycle's value")
+        void whenInnerThrowsInterruptedWhileOpenThenPumpRecoversAndDeliversNextValue() throws Exception {
+            val interrupting = new InterruptingStream();
+            val good         = new ScriptedStream();
+            good.emit(Value.of("recovered"));
+            good.complete();
+            val source = new ControlledSource(() -> interrupting, () -> good);
+
+            try (val stream = new AttributeStream(
+                    invocation("innerInterrupt", INITIAL_TIMEOUT, POLL_INTERVAL, BACKOFF, 1L), source)) {
+
+                assertThat(stream.awaitNext()).isEqualTo(Value.of("recovered"));
+            }
+        }
     }
 
     @Nested
@@ -220,10 +280,12 @@ class AttributeStreamTests {
 
             Thread.startVirtualThread(() -> {
                 try {
+                    // No observable state to await: the consumer parks in awaitNext, so wait a real
+                    // interval to let it block first.
                     Thread.sleep(Duration.ofMillis(50));
                     stream.close();
                 } catch (InterruptedException ignored) {
-                    // Test cleanup helper: the close-after-delay closure is fire-and-forget; if
+                    // Test cleanup helper: the close-after-delay closure is fire-and-forget. If
                     // interrupted we simply skip the close.
                 }
             });
@@ -272,9 +334,10 @@ class AttributeStreamTests {
             val stream  = new AttributeStream(
                     invocation("backoffSleepClose", INITIAL_TIMEOUT, POLL_INTERVAL, backoff, 1L), supplier);
 
-            // Wait until the first attempt has fired and the pump is asleep in backoff.
-            Awaitility.await().atMost(AWAIT_BUDGET).until(() -> supplierInvoked.get() >= 1);
-            sleepUninterruptibly(Duration.ofMillis(50));
+            // Wait until the first attempt has fired and the pump has parked in the backoff
+            // sleep.
+            Awaitility.await().atMost(AWAIT_BUDGET).until(
+                    () -> supplierInvoked.get() >= 1 && stream.pumpThread.getState() == Thread.State.TIMED_WAITING);
 
             val before = System.nanoTime();
             stream.close();
@@ -295,20 +358,30 @@ class AttributeStreamTests {
             val source = new ControlledSource(() -> inner);
             val stream = new AttributeStream(invocation("drainClose"), source);
 
-            // Wait until v1 has surfaced; at that point the pump is parked in drain.
+            // Wait until v1 has surfaced. At that point the pump is parked in drain.
             Awaitility.await().atMost(AWAIT_BUDGET).until(() -> Value.of("v1").equals(valueOrNull(stream.tryNext())));
 
             stream.close();
             assertThat(stream.awaitNext()).isNull();
         }
-    }
 
-    private static void sleepUninterruptibly(Duration duration) {
-        try {
-            Thread.sleep(duration.toMillis());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(e);
+        @Test
+        @DisplayName("close interrupts a pump parked in the poll-interval sleep so its virtual thread terminates "
+                + "promptly instead of lingering until the interval elapses")
+        void whenClosedWhilePollSleepingThenPumpThreadTerminates() throws Exception {
+            val source   = new ControlledSource(() -> oneShot(Value.of("v1")));
+            val longPoll = invocation("pollSleepClose", INITIAL_TIMEOUT, Duration.ofHours(1), BACKOFF, 0L);
+            try (val stream = new AttributeStream(longPoll, source)) {
+                // Consume the value, then wait until the pump parks in the one-hour poll sleep.
+                assertThat(stream.awaitNext()).isEqualTo(Value.of("v1"));
+                Awaitility.await().atMost(AWAIT_BUDGET)
+                        .until(() -> stream.pumpThread.getState() == Thread.State.TIMED_WAITING);
+
+                stream.close();
+
+                Awaitility.await().atMost(AWAIT_BUDGET).until(() -> !stream.pumpThread.isAlive());
+                assertThat(stream.pumpThread.isAlive()).isFalse();
+            }
         }
     }
 
@@ -391,6 +464,32 @@ class AttributeStreamTests {
         @Override
         public void close() {
             backing.close();
+        }
+    }
+
+    /**
+     * Inner stream double modelling an untrusted PIP that throws
+     * {@link InterruptedException} from {@code awaitNext} although the
+     * AttributeStream did not request the interrupt. The first call
+     * throws. Later calls would block, but the pump never reaches them
+     * once it correctly treats the interrupt as a transient failure
+     * and moves to the next cycle.
+     */
+    private static final class InterruptingStream implements Stream<Value> {
+
+        @Override
+        public Value awaitNext() throws InterruptedException {
+            throw new InterruptedException("untrusted inner interrupt");
+        }
+
+        @Override
+        public Poll<Value> tryNext() {
+            return Poll.empty();
+        }
+
+        @Override
+        public void close() {
+            // no resources to release
         }
     }
 

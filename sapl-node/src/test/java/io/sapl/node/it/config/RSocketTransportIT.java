@@ -17,6 +17,8 @@
  */
 package io.sapl.node.it.config;
 
+import static io.sapl.api.pdp.StreamingPolicyDecisionPoint.DEFAULT_PDP_ID;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
@@ -71,8 +73,8 @@ class RSocketTransportIT extends BaseIntegrationTest {
     private static final String BASIC_SECRET         = "haTPcbYA8Dwkl91$)gG42S)UG98eF!*m";
     private static final String BASIC_SECRET_ENCODED = "$argon2id$v=19$m=16384,t=2,p=1$lZK1zPNtAe3+JnT37cGDMg$PSLftgfXXjXDOTY87cCg63F+O+sd/5aeW4m1MFZgSoM";
     private static final String API_KEY              = "sapl_7A7ByyQd6U_5nTv3KXXLPiZ8JzHQywF9gww2v0iuA3j";
+    private static final String API_KEY_ID           = API_KEY.split("_")[1];
     private static final String API_KEY_ENCODED      = "$argon2id$v=19$m=16384,t=2,p=1$FttHTp38SkUUzUA4cA5Epg$QjzIAdvmNGP0auVlkCDpjrgr2LHeM5ul0BYLr7QKwBM";
-    private static final String DEFAULT_PDP_ID       = "default";
 
     private static final Duration STEP_TIMEOUT = Duration.ofSeconds(30);
 
@@ -103,6 +105,7 @@ class RSocketTransportIT extends BaseIntegrationTest {
             String encodedApiKey) {
         return container.withEnv("IO_SAPL_NODE_ALLOWNOAUTH", "false").withEnv("IO_SAPL_NODE_ALLOWAPIKEYAUTH", "true")
                 .withEnv("IO_SAPL_NODE_USERS_0_ID", id).withEnv("IO_SAPL_NODE_USERS_0_PDPID", pdpId)
+                .withEnv("IO_SAPL_NODE_USERS_0_APIKEYID", API_KEY_ID)
                 .withEnv("IO_SAPL_NODE_USERS_0_APIKEY", encodedApiKey);
     }
 
@@ -113,12 +116,13 @@ class RSocketTransportIT extends BaseIntegrationTest {
 
     private ReactivePolicyDecisionPoint connectBasic(GenericContainer<?> container, String username, String password) {
         return RemotePolicyDecisionPoint.builder().rsocket().host(container.getHost())
-                .port(container.getMappedPort(RSOCKET_PORT)).basicAuth(username, password).build();
+                .port(container.getMappedPort(RSOCKET_PORT)).basicAuth(username, password).allowInsecureTransport()
+                .build();
     }
 
     private ReactivePolicyDecisionPoint connectApiKey(GenericContainer<?> container, String apiKey) {
         return RemotePolicyDecisionPoint.builder().rsocket().host(container.getHost())
-                .port(container.getMappedPort(RSOCKET_PORT)).apiKey(apiKey).build();
+                .port(container.getMappedPort(RSOCKET_PORT)).apiKey(apiKey).allowInsecureTransport().build();
     }
 
     private void expectDecision(ReactivePolicyDecisionPoint pdp, AuthorizationSubscription subscription,
@@ -243,7 +247,7 @@ class RSocketTransportIT extends BaseIntegrationTest {
                     saplNode.start();
                     val token = acquireToken(keycloak, username, password);
                     val pdp   = RemotePolicyDecisionPoint.builder().rsocket().host(saplNode.getHost())
-                            .port(saplNode.getMappedPort(RSOCKET_PORT)).apiKey(token).build();
+                            .port(saplNode.getMappedPort(RSOCKET_PORT)).apiKey(token).allowInsecureTransport().build();
                     expectDecision(pdp, subscription, expected);
                 }
             }

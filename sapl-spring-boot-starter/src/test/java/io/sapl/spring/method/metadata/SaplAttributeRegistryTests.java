@@ -184,6 +184,36 @@ class SaplAttributeRegistryTests {
     }
 
     @Test
+    void whenAnnotationOnClassAndInterfaceMethod_ThenReturnsOnClass() {
+
+        @PreEnforce(subject = "'onClass'")
+        class TestClass implements TestInterfaceAnnotatedOnInterfaceAndMethod {
+            public void doSomething() {
+                // NOOP test dummy
+            }
+        }
+
+        expectSubjectExpressionStringInAttribute(TestClass.class, "'onClass'");
+    }
+
+    @Test
+    void whenAnnotationOnClassAndUnoverriddenDefaultInterfaceMethod_ThenReturnsOnClass() {
+
+        @PreEnforce(subject = "'onClass'")
+        class TestClass implements DefaultPreEnforceMethodInterface {
+        }
+
+        // A real target is required so the concrete class is known. An unoverridden
+        // default method's declaring class is the interface, not the bean class.
+        final var sut        = new SaplAttributeRegistry();
+        final var mi         = MethodInvocationUtils.createFromClass(new TestClass(), TestClass.class, "doSomething",
+                null, null);
+        final var attributes = sut.getAllSaplAttributes(mi);
+        assertThat(attributes.values())
+                .anySatisfy(attr -> assertThat(attr.subjectExpression().getExpressionString()).isEqualTo("'onClass'"));
+    }
+
+    @Test
     void whenAnnotationOnMethod_ThenReturnsOnMethodForPost() {
 
         class TestClass {
@@ -198,6 +228,13 @@ class SaplAttributeRegistryTests {
 
     interface DefaultMethodInterface {
         @PostEnforce(subject = "'onDefaultInterfaceMethod'")
+        default void doSomething() {
+            // NOOP test dummy
+        }
+    }
+
+    interface DefaultPreEnforceMethodInterface {
+        @PreEnforce(subject = "'onDefaultInterfaceMethod'")
         default void doSomething() {
             // NOOP test dummy
         }
@@ -220,7 +257,7 @@ class SaplAttributeRegistryTests {
             }
         }
 
-        expectFlagsInAttribute(TestClass.class, false, false, false);
+        expectFlagsInAttribute(TestClass.class, false, false);
     }
 
     @Test
@@ -233,20 +270,7 @@ class SaplAttributeRegistryTests {
             }
         }
 
-        expectFlagsInAttribute(TestClass.class, true, false, false);
-    }
-
-    @Test
-    void whenStreamEnforceWithTerminateOnItemEnforcementFailure_ThenFlagPropagates() {
-
-        class TestClass {
-            @StreamEnforce(terminateOnItemEnforcementFailure = true, subject = "'s'")
-            public void doSomething() {
-                // NOOP test dummy
-            }
-        }
-
-        expectFlagsInAttribute(TestClass.class, false, true, false);
+        expectFlagsInAttribute(TestClass.class, true, false);
     }
 
     @Test
@@ -259,20 +283,20 @@ class SaplAttributeRegistryTests {
             }
         }
 
-        expectFlagsInAttribute(TestClass.class, false, false, true);
+        expectFlagsInAttribute(TestClass.class, false, true);
     }
 
     @Test
     void whenStreamEnforceWithAllFlags_ThenAllPropagate() {
 
         class TestClass {
-            @StreamEnforce(signalTransitions = true, terminateOnItemEnforcementFailure = true, pauseRapDuringSuspend = true, subject = "'s'")
+            @StreamEnforce(signalTransitions = true, pauseRapDuringSuspend = true, subject = "'s'")
             public void doSomething() {
                 // NOOP test dummy
             }
         }
 
-        expectFlagsInAttribute(TestClass.class, true, true, true);
+        expectFlagsInAttribute(TestClass.class, true, true);
     }
 
     @Test
@@ -290,7 +314,6 @@ class SaplAttributeRegistryTests {
         final var attribute = sut.getSaplAttributeForAnnotationType(mi, PreEnforce.class);
         assertThat(attribute).hasValueSatisfying(a -> {
             assertThat(a.signalTransitions()).isFalse();
-            assertThat(a.terminateOnItemEnforcementFailure()).isFalse();
             assertThat(a.pauseRapDuringSuspend()).isFalse();
         });
     }
@@ -304,13 +327,12 @@ class SaplAttributeRegistryTests {
     }
 
     private void expectFlagsInAttribute(Class<?> clazz, boolean expectedSignalTransitions,
-            boolean expectedTerminateOnItemEnforcementFailure, boolean expectedPauseRapDuringSuspend) {
+            boolean expectedPauseRapDuringSuspend) {
         final var sut       = new SaplAttributeRegistry();
         final var mi        = MethodInvocationUtils.createFromClass(clazz, "doSomething");
         final var attribute = sut.getSaplAttributeForAnnotationType(mi, StreamEnforce.class);
         assertThat(attribute).hasValueSatisfying(a -> {
             assertThat(a.signalTransitions()).isEqualTo(expectedSignalTransitions);
-            assertThat(a.terminateOnItemEnforcementFailure()).isEqualTo(expectedTerminateOnItemEnforcementFailure);
             assertThat(a.pauseRapDuringSuspend()).isEqualTo(expectedPauseRapDuringSuspend);
         });
     }

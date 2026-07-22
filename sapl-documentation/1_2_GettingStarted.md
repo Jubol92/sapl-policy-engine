@@ -6,7 +6,7 @@ nav_order: 2
 
 ## Getting Started
 
-SAPL is a reactive authorization engine: it evaluates access control policies and pushes updated decisions whenever policies, attributes, or subscriptions change. This guide introduces the policy syntax through the browser-based playground, then walks through hands-on policy evaluation using the CLI.
+SAPL is an authorization engine for streaming and request-response access control. It evaluates policies against authorization subscriptions and can push updated decisions when policies, attributes, or subscriptions change. This guide introduces the policy syntax through the browser-based playground, then walks through hands-on policy evaluation using the CLI.
 
 ### Learning Policy Syntax
 
@@ -173,7 +173,7 @@ Watch the decision flip between `PERMIT` and `DENY` every five seconds. The PDP 
 
 #### Using Policies in Scripts
 
-The `check` command evaluates a subscription and exits with a code that encodes the decision: `0` for PERMIT, `2` for DENY. No output is written to stdout, making it ideal for shell scripts. Here is a script that checks authorization before starting the MRT:
+The `check` command evaluates a subscription and exits with a code that encodes the decision: `0` for a plain PERMIT, `2` for DENY. A PERMIT carrying obligations exits `4` instead, since the caller must enforce the obligations rather than treat access as unconditionally granted, and the remaining outcomes have their own codes (run `sapl check --help` for the full list). No output is written to stdout, making it ideal for shell scripts. Here is a script that checks authorization before starting the MRT:
 
 <details open markdown="1">
 <summary>Bash</summary>
@@ -217,7 +217,7 @@ You now have policies that grant and deny access, react to live changes, and can
 
 **Integrate into your application.** SAPL provides SDKs for Java ([Java API](../6_2_JavaApi/)), [Spring](../6_3_Spring/), [NestJS](../6_4_NestJS/), Python ([Django](../6_5_Django/), [Flask](../6_6_Flask/), [FastAPI](../6_7_FastAPI/), [Tornado](../6_8_Tornado/), [FastMCP](../6_9_FastMCP/)), and [.NET](../6_10_DotNet/). See [SDKs and APIs](../6_0_SDKsAndAPIs/) for the full list.
 
-**Build your own integration.** If no SDK exists for your language or framework, you can implement a client against the [HTTP API](../6_1_HTTPApi/) directly. For authors building reusable PEP libraries, the [PEP Implementation Specification](../8_1_PEPImplementationSpecification/) defines the requirements.
+**Build your own integration.** If no SDK exists for your language or framework, you can implement a client against the [HTTP API](../6_1_HTTPApi/) directly. Authors building reusable PEP libraries can follow the [Spring](../6_3_Spring/) and [NestJS](../6_4_NestJS/) integrations as reference implementations of the unified enforcement model.
 
 **Explore demo applications.** Complete working examples show how SAPL integrates with real frameworks. Each demo includes policies, Docker infrastructure, and runnable endpoints:
 

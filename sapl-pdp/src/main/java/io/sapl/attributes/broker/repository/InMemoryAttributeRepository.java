@@ -45,8 +45,8 @@ import java.util.function.Consumer;
  * State is volatile: lost on close. TTL expiry removes the entry and
  * notifies observers (who observe {@link Value#UNDEFINED}).
  * <p>
- * Thread-safety: all state mutations occur under a single internal
- * lock; observer callbacks fire outside the lock.
+ * Thread-safety. All state mutations occur under a single internal
+ * lock. Observer callbacks fire outside the lock.
  *
  * @since 4.1.0
  */
@@ -146,6 +146,7 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
                 initial = entry != null ? entry.value : Value.UNDEFINED;
                 seqInit = sequenceCounter;
             }
+            seqInit = sequenceCounter;
         } finally {
             lock.unlock();
 
@@ -275,11 +276,17 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
 
         private static final AtomicLong NEXT_ID = new AtomicLong(Long.MIN_VALUE);
 
+        private static final long WARN_LOG_INTERVAL_NANOS = Duration.ofMinutes(1).toNanos();
+
         private final long            id            = NEXT_ID.getAndIncrement();
         private final RepositoryKey   repositoryKey;
         private final Consumer<Value> onValue;
         private volatile boolean      closed        = false;
         private long                  lastDelivered = Long.MIN_VALUE;
+
+        // Rate-limits the observer-threw warning to one per minute.
+        private long    lastWarnLogNanos;
+        private boolean warnLogged;
 
         synchronized void deliver(Value value, long seq) {
             if (closed || seq <= lastDelivered) {
@@ -291,7 +298,16 @@ public final class InMemoryAttributeRepository implements AttributeRepository {
             try {
                 onValue.accept(value);
             } catch (RuntimeException e) {
-                log.warn(WARN_OBSERVER_THREW, id, e.getMessage(), e);
+                logObserverFailure(e);
+            }
+        }
+
+        private void logObserverFailure(RuntimeException failure) {
+            val now = System.nanoTime();
+            if (!warnLogged || now - lastWarnLogNanos >= WARN_LOG_INTERVAL_NANOS) {
+                log.warn(WARN_OBSERVER_THREW, id, failure.getMessage(), failure);
+                lastWarnLogNanos = now;
+                warnLogged       = true;
             }
         }
 

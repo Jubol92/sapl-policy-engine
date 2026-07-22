@@ -18,6 +18,7 @@
 package io.sapl.playground.examples;
 
 import static io.sapl.api.pdp.configuration.CombiningAlgorithm.DefaultDecision.ABSTAIN;
+import static io.sapl.api.pdp.configuration.CombiningAlgorithm.DefaultDecision.SUSPEND;
 import static io.sapl.api.pdp.configuration.CombiningAlgorithm.ErrorHandling.PROPAGATE;
 import static io.sapl.api.pdp.configuration.CombiningAlgorithm.VotingMode.PRIORITY_DENY;
 
@@ -52,7 +53,7 @@ public class ExamplesCollection {
                         var now = <time.now>;
                         var hour = time.hourOf(now);
                         hour >= 9 && hour < 17;
-                    """), new CombiningAlgorithm(PRIORITY_DENY, ABSTAIN, PROPAGATE), """
+                    """), new CombiningAlgorithm(PRIORITY_DENY, SUSPEND, PROPAGATE), """
                     {
                        "subject"     : { "username": "alice", "role": "employee" },
                        "action"      : "access",
@@ -119,7 +120,7 @@ public class ExamplesCollection {
 
                         // Contrast this with this implementation:
                         // var currentHour = time.hourOf(<time.now>); // Note this always counts as a line evaluating to true
-                        // !(currentHour >= 9 && currentHour < 17);
+                        // !(currentHour >= 9 && currentHour < 17).
 
                         // Comment the first version and uncomment the two lines of
                         // the second version to the the effect.
@@ -316,7 +317,7 @@ public class ExamplesCollection {
                     policy "permit-adjacent-buffer-touch"
                     permit
                         action.type == "inspect";
-                        // Buffer width is in same units as coordinates; for planar toy data this is fine
+                        // Buffer width is in same units as coordinates. For planar toy data this is fine
                         geo.touches(geo.buffer(resource.assetFootprint, 10), action.inspectionPath);
                     """), new CombiningAlgorithm(PRIORITY_DENY, ABSTAIN, PROPAGATE), """
                     {

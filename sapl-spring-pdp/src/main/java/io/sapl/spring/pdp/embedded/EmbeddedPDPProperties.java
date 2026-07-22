@@ -88,6 +88,15 @@ public class EmbeddedPDPProperties {
     private String policiesPath = "/policies";
 
     /**
+     * Use a coarse-resolution cached clock for observability timestamps (decision
+     * trace and attribute value freshness) instead of the accurate system clock.
+     * Cheaper per decision at high throughput, at the cost of coarser timestamp
+     * precision. Temporal policy reasoning (time PIP, certificate validity, JWT
+     * expiry, scheduling) always uses the accurate clock. Defaults to false.
+     */
+    private boolean coarseTimestamps = false;
+
+    /**
      * Security configuration for bundle signature verification.
      * Used when pdpConfigType is BUNDLES or REMOTE_BUNDLES.
      */
@@ -250,7 +259,7 @@ public class EmbeddedPDPProperties {
          * Default interval between polls. Applies to all pdpIds unless
          * overridden in {@link #pdpIdPollIntervals}.
          */
-        private Duration pollInterval = Duration.ofSeconds(30);
+        private Duration pollInterval = Duration.ofSeconds(5);
 
         /**
          * Server hold timeout for long-poll mode.
@@ -268,6 +277,12 @@ public class EmbeddedPDPProperties {
          * (e.g., {@code Bearer <token>}, {@code <api-key>}).
          */
         private String authHeaderValue;
+
+        /**
+         * Whether authentication credentials may be sent over plaintext HTTP.
+         * Keep disabled outside trusted local or proxied deployments.
+         */
+        private boolean allowInsecureHttp = false;
 
         /**
          * Whether to follow HTTP 3xx redirects.

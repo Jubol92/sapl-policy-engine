@@ -17,6 +17,7 @@
  */
 package io.sapl.pdp.configuration.source;
 
+import io.sapl.api.pdp.StreamingPolicyDecisionPoint;
 import io.sapl.pdp.configuration.PDPConfigurationException;
 import io.sapl.pdp.configuration.PDPConfigurationLoader;
 import lombok.NonNull;
@@ -59,7 +60,7 @@ import java.util.function.Consumer;
  * decisions with the exact policy set. If
  * pdp.json contains a {@code configurationId} field, that value is used.
  * Otherwise, an ID is auto-generated in the
- * format: {@code dir:<path>@<timestamp>@sha256:<hash>}
+ * format: {@code dir:<path>@<timestamp>}
  * </p>
  * <h2>Thread Safety</h2>
  * <p>
@@ -80,18 +81,22 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
     private static final long POLL_INTERVAL_MS        = 500;
     private static final long MONITOR_STOP_TIMEOUT_MS = 5000;
 
-    private static final String ERROR_FAILED_TO_LOAD_INITIAL_CONFIGURATION = "Failed to load initial configuration for PDP '{}': {}. "
-            + "File monitoring will continue and configuration will be loaded when a valid configuration is provided.";
+    private static final String ERROR_DIRECTORY_MISSING                    = "Policy directory for PDP '{}' is missing: '{}'. Every decision is INDETERMINATE until the directory exists with a valid configuration. Decisions resume automatically once it is created.";
+    private static final String ERROR_FAILED_TO_LOAD_INITIAL_CONFIGURATION = "The configuration for PDP '{}' could not be loaded: {}. Every decision is INDETERMINATE until a valid configuration is in place. Decisions resume automatically once it is corrected.";
     private static final String ERROR_FAILED_TO_START_FILE_MONITOR         = "Failed to start file monitor for configuration directory: '%s'.";
     private static final String ERROR_PATH_IS_NOT_DIRECTORY                = "Configuration path is not a directory: '%s'.";
+    private static final String WARN_SUBSCRIBER_THREW                      = "Configuration subscriber for PDP '{}' threw and was isolated; other subscribers and hot-reload are unaffected: {}";
 
     private final Path                              directoryPath;
     private final String                            pdpId;
     private final Runnable                          onDirectoryRemoved;
+    private final boolean                           recoverOnDirectoryRemoval;
     private final FileAlterationMonitor             monitor;
-    private final Set<Consumer<ConfigurationEvent>> subscribers = ConcurrentHashMap.newKeySet();
-    private final AtomicBoolean                     activated   = new AtomicBoolean(false);
-    private final AtomicBoolean                     closed      = new AtomicBoolean(false);
+    private final Set<Consumer<ConfigurationEvent>> subscribers      = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean                     activated        = new AtomicBoolean(false);
+    private final AtomicBoolean                     closed           = new AtomicBoolean(false);
+    private final AtomicBoolean                     directoryPresent = new AtomicBoolean(true);
+    private final AtomicBoolean                     monitorStarted   = new AtomicBoolean(false);
 
     /**
      * Creates a source for the specified directory with default PDP ID.
@@ -99,7 +104,7 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
      * @param directoryPath the filesystem directory containing policy files
      */
     public DirectoryPDPConfigurationSource(@NonNull Path directoryPath) {
-        this(directoryPath, PdpIdValidator.DEFAULT_PDP_ID);
+        this(directoryPath, StreamingPolicyDecisionPoint.DEFAULT_PDP_ID);
     }
 
     /**
@@ -109,17 +114,30 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
      * @param pdpId the PDP identifier for loaded configurations
      */
     public DirectoryPDPConfigurationSource(@NonNull Path directoryPath, @NonNull String pdpId) {
-        this(directoryPath, pdpId, () -> {});
+        // Standalone: on removal, emit a Remove and keep watching to recover when the
+        // directory reappears.
+        this(directoryPath, pdpId, () -> {}, true);
     }
 
     DirectoryPDPConfigurationSource(@NonNull Path directoryPath,
             @NonNull String pdpId,
             @NonNull Runnable onDirectoryRemoved) {
+        // Parent-managed (MultiDirectory child): on removal, self-close and delegate
+        // recovery to the parent.
+        this(directoryPath, pdpId, onDirectoryRemoved, false);
+    }
+
+    private DirectoryPDPConfigurationSource(@NonNull Path directoryPath,
+            @NonNull String pdpId,
+            @NonNull Runnable onDirectoryRemoved,
+            boolean recoverOnDirectoryRemoval) {
         PdpIdValidator.validatePdpId(pdpId);
-        this.directoryPath      = PdpIdValidator.resolveHomeFolderIfPresent(directoryPath).toAbsolutePath().normalize();
-        this.pdpId              = pdpId;
-        this.onDirectoryRemoved = onDirectoryRemoved;
-        this.monitor            = new FileAlterationMonitor(POLL_INTERVAL_MS);
+        this.directoryPath             = PdpIdValidator.resolveHomeFolderIfPresent(directoryPath).toAbsolutePath()
+                .normalize();
+        this.pdpId                     = pdpId;
+        this.onDirectoryRemoved        = onDirectoryRemoved;
+        this.recoverOnDirectoryRemoval = recoverOnDirectoryRemoval;
+        this.monitor                   = new FileAlterationMonitor(POLL_INTERVAL_MS);
     }
 
     @Override
@@ -154,7 +172,20 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
 
     private void activate() {
         log.info("Loading PDP configuration '{}' from directory: '{}'.", pdpId, directoryPath);
-        validateDirectory();
+        if (!Files.isDirectory(directoryPath)) {
+            // A non-directory path, or a parent-managed child whose directory is gone, is
+            // an unrecoverable
+            // misconfiguration, so fail fast. A standalone source whose directory does not
+            // exist yet is
+            // transiently absent, so log and keep watching.
+            if (Files.exists(directoryPath) || !recoverOnDirectoryRemoval) {
+                throw new PDPConfigurationException(ERROR_PATH_IS_NOT_DIRECTORY.formatted(directoryPath));
+            }
+            directoryPresent.set(false);
+            log.error(ERROR_DIRECTORY_MISSING, pdpId, directoryPath);
+            startFileMonitor();
+            return;
+        }
         try {
             loadAndEmit();
         } catch (Exception e) {
@@ -163,12 +194,6 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
             log.error(ERROR_FAILED_TO_LOAD_INITIAL_CONFIGURATION, pdpId, e.getMessage(), e);
         }
         startFileMonitor();
-    }
-
-    private void validateDirectory() {
-        if (!Files.isDirectory(directoryPath)) {
-            throw new PDPConfigurationException(ERROR_PATH_IS_NOT_DIRECTORY.formatted(directoryPath));
-        }
     }
 
     private void loadAndEmit() {
@@ -182,7 +207,13 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
             return;
         }
         for (val subscriber : subscribers) {
-            subscriber.accept(event);
+            try {
+                subscriber.accept(event);
+            } catch (Exception e) {
+                // Isolate subscribers: a throwing one must not skip the others or
+                // escape onto the file-monitor thread.
+                log.warn(WARN_SUBSCRIBER_THREW, pdpId, e.getMessage());
+            }
         }
     }
 
@@ -194,6 +225,7 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
             observer.addListener(new DirectoryChangeListener());
             monitor.addObserver(observer);
             monitor.start();
+            monitorStarted.set(true);
             log.debug("Started file monitoring on directory: {}.", directoryPath);
         } catch (Exception e) {
             throw new PDPConfigurationException(ERROR_FAILED_TO_START_FILE_MONITOR.formatted(directoryPath), e);
@@ -209,6 +241,12 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
     }
 
     private void stopMonitorSafely() {
+        if (!monitorStarted.get()) {
+            // Startup failed before the monitor was started, so there is nothing to stop.
+            // Calling stop() on a never-started monitor throws, which would surface a
+            // misleading stack trace during an otherwise clean shutdown.
+            return;
+        }
         try {
             monitor.stop(MONITOR_STOP_TIMEOUT_MS);
         } catch (Exception e) {
@@ -229,7 +267,24 @@ public final class DirectoryPDPConfigurationSource implements PDPConfigurationSo
 
         @Override
         public void onStart(FileAlterationObserver observer) {
-            if (closed.get() || Files.exists(directoryPath)) {
+            if (closed.get()) {
+                return;
+            }
+            if (Files.isDirectory(directoryPath)) {
+                if (directoryPresent.compareAndSet(false, true)) {
+                    log.info("Directory for PDP '{}' reappeared; reloading configuration.", pdpId);
+                    handleFileChange(directoryPath.toFile());
+                }
+                return;
+            }
+            if (recoverOnDirectoryRemoval) {
+                // The directory is gone but may return. Surface its absence as a
+                // Remove (so consumers fail closed to INDETERMINATE) and keep
+                // watching so a recreation reloads the configuration.
+                if (directoryPresent.compareAndSet(true, false)) {
+                    log.error(ERROR_DIRECTORY_MISSING, pdpId, directoryPath);
+                    emit(new ConfigurationEvent.Remove(pdpId));
+                }
                 return;
             }
             if (closed.compareAndSet(false, true)) {

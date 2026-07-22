@@ -40,10 +40,11 @@ import reactor.test.StepVerifier;
  * Contract tests for the streaming PEP's backpressure transparency.
  * <p>
  * The streaming wrapper must not change the subscriber-visible backpressure
- * characteristics of the protected stream. Downstream demand must propagate
- * to the upstream source. Items dropped under the suspended gate must be
- * topped up so that {@code request(N)} continues to mean "up to N delivered
- * items" from the subscriber's perspective.
+ * characteristics of the protected stream.
+ * Downstream demand must propagate to the upstream source. Items dropped under
+ * the suspended gate must be topped up so
+ * that {@code request(N)} continues to mean "up to N delivered items" from the
+ * subscriber's perspective.
  */
 @DisplayName("StreamingPipeline backpressure transparency")
 class StreamingPipelineBackpressureTransparencyTests {
@@ -68,7 +69,7 @@ class StreamingPipelineBackpressureTransparencyTests {
                                                 return rap.asFlux().doOnRequest(upstreamRequested::addAndGet);
                                             };
             val                    pdpFlux  = pdp.asFlux().doOnNext(ignored -> pdpEvents.incrementAndGet());
-            return StreamingPipeline.create(false, pauseRapDuringSuspend, pdpFlux, d -> plan, supplier, false);
+            return StreamingPipeline.create(pauseRapDuringSuspend, pdpFlux, d -> plan, supplier, false);
         }
 
         void resetUpstreamSink() {

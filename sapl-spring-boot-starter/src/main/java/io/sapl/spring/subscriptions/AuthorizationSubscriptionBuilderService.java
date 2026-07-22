@@ -44,9 +44,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.util.context.ContextView;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Optional;
 
@@ -60,8 +60,9 @@ import static java.lang.reflect.Modifier.isSynchronized;
 
 /**
  * Unified service for building {@link AuthorizationSubscription} instances from
- * method invocations and {@link SaplAttribute} security annotations. Supports
- * both Servlet (blocking) and WebFlux (reactive) contexts.
+ * method invocations and
+ * {@link SaplAttribute} security annotations. Supports both Servlet (blocking)
+ * and WebFlux (reactive) contexts.
  */
 @Slf4j
 public class AuthorizationSubscriptionBuilderService {
@@ -87,8 +88,10 @@ public class AuthorizationSubscriptionBuilderService {
     /**
      * Constructor for reactive method security context with resolved beans.
      *
-     * @param expressionHandler the method security expression handler
-     * @param mapper the object mapper for JSON serialization
+     * @param expressionHandler
+     * the method security expression handler
+     * @param mapper
+     * the object mapper for JSON serialization
      */
     public AuthorizationSubscriptionBuilderService(MethodSecurityExpressionHandler expressionHandler,
             ObjectMapper mapper) {
@@ -96,12 +99,15 @@ public class AuthorizationSubscriptionBuilderService {
     }
 
     /**
-     * Constructor for reactive method security context with resolved beans
-     * and optional secrets injector.
+     * Constructor for reactive method security context with resolved beans and
+     * optional secrets injector.
      *
-     * @param expressionHandler the method security expression handler
-     * @param mapper the object mapper for JSON serialization
-     * @param secretsInjector optional injector for subscription secrets
+     * @param expressionHandler
+     * the method security expression handler
+     * @param mapper
+     * the object mapper for JSON serialization
+     * @param secretsInjector
+     * optional injector for subscription secrets
      */
     public AuthorizationSubscriptionBuilderService(MethodSecurityExpressionHandler expressionHandler,
             ObjectMapper mapper,
@@ -118,10 +124,14 @@ public class AuthorizationSubscriptionBuilderService {
     /**
      * Constructor for lazy bean resolution via ObjectProviders.
      *
-     * @param expressionHandlerProvider provider for the expression handler
-     * @param mapperProvider provider for the object mapper
-     * @param defaultsProvider provider for granted authority defaults
-     * @param applicationContext the application context
+     * @param expressionHandlerProvider
+     * provider for the expression handler
+     * @param mapperProvider
+     * provider for the object mapper
+     * @param defaultsProvider
+     * provider for granted authority defaults
+     * @param applicationContext
+     * the application context
      */
     public AuthorizationSubscriptionBuilderService(
             ObjectProvider<MethodSecurityExpressionHandler> expressionHandlerProvider,
@@ -135,11 +145,16 @@ public class AuthorizationSubscriptionBuilderService {
      * Constructor for lazy bean resolution via ObjectProviders with optional
      * secrets injector.
      *
-     * @param expressionHandlerProvider provider for the expression handler
-     * @param mapperProvider provider for the object mapper
-     * @param defaultsProvider provider for granted authority defaults
-     * @param applicationContext the application context
-     * @param secretsInjector optional injector for subscription secrets
+     * @param expressionHandlerProvider
+     * provider for the expression handler
+     * @param mapperProvider
+     * provider for the object mapper
+     * @param defaultsProvider
+     * provider for granted authority defaults
+     * @param applicationContext
+     * the application context
+     * @param secretsInjector
+     * optional injector for subscription secrets
      */
     public AuthorizationSubscriptionBuilderService(
             ObjectProvider<MethodSecurityExpressionHandler> expressionHandlerProvider,
@@ -157,9 +172,13 @@ public class AuthorizationSubscriptionBuilderService {
     /**
      * Constructs an authorization subscription for Servlet/blocking context.
      *
-     * @param authentication the current authentication
-     * @param methodInvocation the method invocation
-     * @param attribute the SAPL attribute containing expressions
+     * @param authentication
+     * the current authentication
+     * @param methodInvocation
+     * the method invocation
+     * @param attribute
+     * the SAPL attribute containing expressions
+     *
      * @return the constructed authorization subscription
      */
     public AuthorizationSubscription constructAuthorizationSubscription(Authentication authentication,
@@ -174,10 +193,15 @@ public class AuthorizationSubscriptionBuilderService {
      * Constructs an authorization subscription for Servlet/blocking context with
      * return object.
      *
-     * @param authentication the current authentication
-     * @param methodInvocation the method invocation
-     * @param attribute the SAPL attribute containing expressions
-     * @param returnObject the return object from the method
+     * @param authentication
+     * the current authentication
+     * @param methodInvocation
+     * the method invocation
+     * @param attribute
+     * the SAPL attribute containing expressions
+     * @param returnObject
+     * the return object from the method
+     *
      * @return the constructed authorization subscription
      */
     public AuthorizationSubscription constructAuthorizationSubscriptionWithReturnObject(Authentication authentication,
@@ -192,8 +216,11 @@ public class AuthorizationSubscriptionBuilderService {
     /**
      * Constructs a reactive authorization subscription for WebFlux context.
      *
-     * @param methodInvocation the method invocation
-     * @param attribute the SAPL attribute containing expressions
+     * @param methodInvocation
+     * the method invocation
+     * @param attribute
+     * the SAPL attribute containing expressions
+     *
      * @return a Mono emitting the constructed authorization subscription
      */
     public Mono<AuthorizationSubscription> reactiveConstructAuthorizationSubscription(MethodInvocation methodInvocation,
@@ -206,9 +233,13 @@ public class AuthorizationSubscriptionBuilderService {
      * Constructs a reactive authorization subscription for WebFlux context with
      * return object.
      *
-     * @param methodInvocation the method invocation
-     * @param attribute the SAPL attribute containing expressions
-     * @param returnedObject the return object from the method
+     * @param methodInvocation
+     * the method invocation
+     * @param attribute
+     * the SAPL attribute containing expressions
+     * @param returnedObject
+     * the return object from the method
+     *
      * @return a Mono emitting the constructed authorization subscription
      */
     public Mono<AuthorizationSubscription> reactiveConstructAuthorizationSubscription(MethodInvocation methodInvocation,
@@ -304,31 +335,23 @@ public class AuthorizationSubscriptionBuilderService {
     /**
      * Retrieves the subject for the authorization subscription. When no explicit
      * subject expression is provided, serializes the authentication object and
-     * strips sensitive fields:
-     * <ul>
-     * <li>{@code credentials} - removed from the root authentication object</li>
-     * <li>{@code token.tokenValue} - raw encoded token removed from token
-     * object</li>
-     * <li>{@code principal.password} - password removed from principal</li>
-     * <li>{@code principal.tokenValue} - raw encoded token removed from
-     * principal</li>
-     * </ul>
+     * applies a best-effort recursive redaction that removes well-known credential
+     * field names (see {@link #CREDENTIAL_FIELD_NAMES}) at any node depth,
+     * case-insensitive on exact field name. This neutralizes nested raw tokens
+     * (for example an OIDC {@code principal.idToken.tokenValue} or OAuth2
+     * {@code accessToken}/{@code refreshToken} values) and custom-principal secret
+     * fields, while preserving benign domain fields carried by custom principals.
+     * <p>
+     * The redaction is best-effort. Principals that carry secrets under
+     * non-standard field names must configure an explicit subject expression, which
+     * short-circuits this projection entirely.
      */
     private JsonNode retrieveSubject(Authentication authentication, Expression subjectExpr, EvaluationContext ctx) {
         if (subjectExpr != null) {
             return evaluateToJson(subjectExpr, ctx);
         }
 
-        ObjectNode subject = mapper().valueToTree(authentication);
-        subject.remove("credentials");
-        stripTokenValue(subject.get("token"));
-        val principal = subject.get("principal");
-        if (principal instanceof ObjectNode objectPrincipal) {
-            objectPrincipal.remove("password");
-            objectPrincipal.remove("tokenValue");
-        }
-
-        return subject;
+        return CredentialRedaction.redact(mapper().valueToTree(authentication));
     }
 
     private Value retrieveAction(MethodInvocation mi, Expression actionExpr, EvaluationContext ctx,
@@ -340,7 +363,7 @@ public class AuthorizationSubscriptionBuilderService {
         val actionBuilder = ObjectValue.builder();
 
         if (requestObject != null) {
-            actionBuilder.put("http", fromJsonNode(mapper().valueToTree(requestObject)));
+            actionBuilder.put("http", fromJsonNode(CredentialRedaction.redact(mapper().valueToTree(requestObject))));
         }
 
         val javaBuilder = ObjectValue.builder().putAll(toValue(mi));
@@ -350,9 +373,10 @@ public class AuthorizationSubscriptionBuilderService {
             val argsBuilder = ArrayValue.builder();
             for (val arg : arguments) {
                 try {
-                    argsBuilder.add(fromJsonNode(mapper().valueToTree(arg)));
-                } catch (IllegalArgumentException e) {
-                    // drop if not mappable to JSON
+                    argsBuilder.add(fromJsonNode(CredentialRedaction.redact(mapper().valueToTree(arg))));
+                } catch (IllegalArgumentException | JacksonException e) {
+                    // drop if not mappable to JSON (Jackson 3 raises JacksonException, not
+                    // IllegalArgumentException)
                 }
             }
             val argsArray = argsBuilder.build();
@@ -374,7 +398,7 @@ public class AuthorizationSubscriptionBuilderService {
         val resourceBuilder = ObjectValue.builder();
 
         if (httpRequest != null) {
-            resourceBuilder.put("http", fromJsonNode(mapper().valueToTree(httpRequest)));
+            resourceBuilder.put("http", fromJsonNode(CredentialRedaction.redact(mapper().valueToTree(httpRequest))));
         }
 
         resourceBuilder.put("java", toValue(mi));
@@ -391,12 +415,6 @@ public class AuthorizationSubscriptionBuilderService {
             return null;
         }
         return evaluateToJson(environmentExpr, ctx);
-    }
-
-    private static void stripTokenValue(JsonNode node) {
-        if (node instanceof ObjectNode objectNode) {
-            objectNode.remove("tokenValue");
-        }
     }
 
     private ObjectValue retrieveSecrets(Authentication authentication, Expression secretsExpr, EvaluationContext ctx) {

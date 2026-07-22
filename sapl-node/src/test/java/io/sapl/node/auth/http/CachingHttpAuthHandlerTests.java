@@ -41,9 +41,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtDecoderInitializationException;
 import org.springframework.security.oauth2.jwt.JwtException;
 
 import io.sapl.node.SaplNodeProperties;
@@ -68,9 +68,6 @@ class CachingHttpAuthHandlerTests {
     private UserLookupService userLookupService;
 
     @Mock
-    private PasswordEncoder passwordEncoder;
-
-    @Mock
     private HttpServletRequest request;
 
     @Mock
@@ -81,12 +78,12 @@ class CachingHttpAuthHandlerTests {
     private static final String TENANT_PDP    = "tenant-x";
 
     private CachingHttpAuthHandler handler() {
-        return new CachingHttpAuthHandler(properties, userLookupService, passwordEncoder, jwtDecoder,
-                Duration.ofMinutes(5), Duration.ofSeconds(5), 100L);
+        return new CachingHttpAuthHandler(properties, userLookupService, jwtDecoder, Duration.ofMinutes(5),
+                Duration.ofSeconds(5), 100L);
     }
 
     private CachingHttpAuthHandler handlerWithoutJwtDecoder() {
-        return new CachingHttpAuthHandler(properties, userLookupService, passwordEncoder, null, Duration.ofMinutes(5),
+        return new CachingHttpAuthHandler(properties, userLookupService, null, Duration.ofMinutes(5),
                 Duration.ofSeconds(5), 100L);
     }
 
@@ -165,9 +162,8 @@ class CachingHttpAuthHandlerTests {
             val header = basicHeader("alice", "secret");
             when(request.getHeader(AUTHORIZATION)).thenReturn(header);
             when(properties.isAllowBasicAuth()).thenReturn(true);
-            when(userLookupService.findByBasicUsername("alice"))
+            when(userLookupService.verifyBasicCredentials("alice", "secret"))
                     .thenReturn(Optional.of(basicUser("alice", TENANT_PDP, "alice", "encoded-secret")));
-            when(passwordEncoder.matches("secret", "encoded-secret")).thenReturn(true);
 
             val sut = handler();
 
@@ -192,7 +188,7 @@ class CachingHttpAuthHandlerTests {
             val header = basicHeader("ghost", "anything");
             when(request.getHeader(AUTHORIZATION)).thenReturn(header);
             when(properties.isAllowBasicAuth()).thenReturn(true);
-            when(userLookupService.findByBasicUsername("ghost")).thenReturn(Optional.empty());
+            when(userLookupService.verifyBasicCredentials("ghost", "anything")).thenReturn(Optional.empty());
 
             val sut = handler();
 
@@ -205,9 +201,7 @@ class CachingHttpAuthHandlerTests {
             val header = basicHeader("alice", "wrong");
             when(request.getHeader(AUTHORIZATION)).thenReturn(header);
             when(properties.isAllowBasicAuth()).thenReturn(true);
-            when(userLookupService.findByBasicUsername("alice"))
-                    .thenReturn(Optional.of(basicUser("alice", TENANT_PDP, "alice", "encoded-secret")));
-            when(passwordEncoder.matches("wrong", "encoded-secret")).thenReturn(false);
+            when(userLookupService.verifyBasicCredentials("alice", "wrong")).thenReturn(Optional.empty());
 
             val sut = handler();
 
@@ -224,7 +218,7 @@ class CachingHttpAuthHandlerTests {
             val sut = handler();
 
             assertThatThrownBy(() -> sut.authenticate(request)).isInstanceOf(HttpAuthenticationException.class);
-            verify(userLookupService, never()).findByBasicUsername(anyString());
+            verify(userLookupService, never()).verifyBasicCredentials(anyString(), anyString());
         }
 
         @Test
@@ -277,19 +271,35 @@ class CachingHttpAuthHandlerTests {
             val rawKey = "sapl_kid_secret";
             when(request.getHeader(AUTHORIZATION)).thenReturn("Bearer " + rawKey);
             when(properties.isAllowApiKeyAuth()).thenReturn(false);
-            when(properties.isAllowOauth2Auth()).thenReturn(false);
 
-            val sut = new CachingHttpAuthHandler(properties, userLookupService, passwordEncoder, null,
-                    Duration.ofMinutes(5), Duration.ofSeconds(5), 100L);
+            val sut = new CachingHttpAuthHandler(properties, userLookupService, null, Duration.ofMinutes(5),
+                    Duration.ofSeconds(5), 100L);
 
             assertThatThrownBy(() -> sut.authenticate(request)).isInstanceOf(HttpAuthenticationException.class);
             verify(userLookupService, never()).findByApiKey(anyString());
+        }
+
+        @Test
+        @DisplayName("API key prefix is rejected before JWT decoding when OAuth2 is enabled")
+        void whenApiKeyPrefixAndOauthEnabledButApiKeyDisabledThenRejectedWithoutJwtDecode() {
+            val rawKey = "sapl_kid_secret";
+            when(request.getHeader(AUTHORIZATION)).thenReturn("Bearer " + rawKey);
+            when(properties.isAllowApiKeyAuth()).thenReturn(false);
+
+            val sut = handler();
+
+            assertThatThrownBy(() -> sut.authenticate(request)).isInstanceOf(HttpAuthenticationException.class);
+            verify(userLookupService, never()).findByApiKey(anyString());
+            verify(jwtDecoder, never()).decode(anyString());
         }
     }
 
     @Nested
     @DisplayName("OAuth2 / JWT authentication")
     class JwtAuthentication {
+
+        private static final Instant ISSUED_AT  = Instant.parse("2026-02-13T00:00:00Z");
+        private static final Instant EXPIRES_AT = ISSUED_AT.plusSeconds(60);
 
         @Test
         @DisplayName("valid JWT with pdpId claim routes to that pdpId")
@@ -301,7 +311,73 @@ class CachingHttpAuthHandlerTests {
             oauth.setPdpIdClaim("sapl_pdp_id");
             when(properties.getOauth()).thenReturn(oauth);
             val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("sapl_pdp_id", TENANT_PDP)
-                    .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60)).build();
+                    .issuedAt(ISSUED_AT).expiresAt(EXPIRES_AT).build();
+            when(jwtDecoder.decode(token)).thenReturn(jwt);
+
+            val sut = handler();
+
+            assertThat(sut.authenticate(request).pdpId()).isEqualTo(TENANT_PDP);
+        }
+
+        @Test
+        @DisplayName("a valid JWT propagates its exp to the auth result so the transport can close the stream at expiry")
+        void whenValidJwtThenExpiryPropagated() {
+            val token = "eyJhbGciOiJSUzI1NiJ9.payload.sig";
+            when(request.getHeader(AUTHORIZATION)).thenReturn("Bearer " + token);
+            when(properties.isAllowOauth2Auth()).thenReturn(true);
+            val oauth = new OAuthConfig();
+            oauth.setPdpIdClaim("sapl_pdp_id");
+            when(properties.getOauth()).thenReturn(oauth);
+            val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("sapl_pdp_id", TENANT_PDP)
+                    .issuedAt(ISSUED_AT).expiresAt(EXPIRES_AT).build();
+            when(jwtDecoder.decode(token)).thenReturn(jwt);
+
+            val sut = handler();
+
+            assertThat(sut.authenticate(request).expiresAt()).isEqualTo(EXPIRES_AT);
+        }
+
+        @Test
+        @DisplayName("an OIDC issuer outage (JwtDecoderInitializationException) fails closed as an auth failure, not an uncaught 500")
+        void whenJwtDecoderInitializationFailsThenFailsClosed() {
+            val token = "eyJhbGciOiJSUzI1NiJ9.payload.sig";
+            when(request.getHeader(AUTHORIZATION)).thenReturn("Bearer " + token);
+            when(properties.isAllowOauth2Auth()).thenReturn(true);
+            when(jwtDecoder.decode(token)).thenThrow(
+                    new JwtDecoderInitializationException("issuer unreachable", new RuntimeException("dns")));
+
+            val sut = handler();
+
+            assertThatThrownBy(() -> sut.authenticate(request)).isInstanceOf(HttpAuthenticationException.class);
+        }
+
+        @Test
+        @DisplayName("JWT without an exp claim is rejected by default (would grant non-expiring access)")
+        void whenJwtWithoutExpiryAndNotAllowedThenRejected() {
+            val token = "eyJhbGciOiJSUzI1NiJ9.payload.sig";
+            when(request.getHeader(AUTHORIZATION)).thenReturn("Bearer " + token);
+            when(properties.isAllowOauth2Auth()).thenReturn(true);
+            when(properties.getOauth()).thenReturn(new OAuthConfig());
+            val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("sapl_pdp_id", TENANT_PDP)
+                    .issuedAt(ISSUED_AT).build();
+            when(jwtDecoder.decode(token)).thenReturn(jwt);
+
+            val sut = handler();
+
+            assertThatThrownBy(() -> sut.authenticate(request)).isInstanceOf(HttpAuthenticationException.class);
+        }
+
+        @Test
+        @DisplayName("JWT without an exp claim is accepted when allow-jwt-without-expiry=true")
+        void whenJwtWithoutExpiryAndAllowedThenAccepted() {
+            val token = "eyJhbGciOiJSUzI1NiJ9.payload.sig";
+            when(request.getHeader(AUTHORIZATION)).thenReturn("Bearer " + token);
+            when(properties.isAllowOauth2Auth()).thenReturn(true);
+            val oauth = new OAuthConfig();
+            oauth.setAllowJwtWithoutExpiry(true);
+            when(properties.getOauth()).thenReturn(oauth);
+            val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("sapl_pdp_id", TENANT_PDP)
+                    .issuedAt(ISSUED_AT).build();
             when(jwtDecoder.decode(token)).thenReturn(jwt);
 
             val sut = handler();
@@ -332,8 +408,8 @@ class CachingHttpAuthHandlerTests {
             oauth.setPdpIdClaim("sapl_pdp_id");
             when(properties.getOauth()).thenReturn(oauth);
             when(properties.isRejectOnMissingPdpId()).thenReturn(true);
-            val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("sub", "user").issuedAt(Instant.now())
-                    .expiresAt(Instant.now().plusSeconds(60)).build();
+            val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("sub", "user").issuedAt(ISSUED_AT)
+                    .expiresAt(EXPIRES_AT).build();
             when(jwtDecoder.decode(token)).thenReturn(jwt);
 
             val sut = handler();
@@ -352,8 +428,8 @@ class CachingHttpAuthHandlerTests {
             when(properties.getOauth()).thenReturn(oauth);
             when(properties.isRejectOnMissingPdpId()).thenReturn(false);
             when(properties.getDefaultPdpId()).thenReturn(DEFAULT_PDP);
-            val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("other", "value").issuedAt(Instant.now())
-                    .expiresAt(Instant.now().plusSeconds(60)).build();
+            val jwt = Jwt.withTokenValue(token).header("alg", "RS256").claim("other", "value").issuedAt(ISSUED_AT)
+                    .expiresAt(EXPIRES_AT).build();
             when(jwtDecoder.decode(token)).thenReturn(jwt);
 
             val sut = handler();
@@ -379,37 +455,34 @@ class CachingHttpAuthHandlerTests {
     class CacheReuse {
 
         @Test
-        @DisplayName("identical Basic header in two consecutive calls runs the password encoder only once")
-        void whenSameBasicHeaderTwiceThenPasswordEncoderCalledOnce() {
+        @DisplayName("identical Basic header in two consecutive calls verifies the credentials only once")
+        void whenSameBasicHeaderTwiceThenCredentialsVerifiedOnce() {
             val header = basicHeader("alice", "secret");
             when(request.getHeader(AUTHORIZATION)).thenReturn(header);
             when(properties.isAllowBasicAuth()).thenReturn(true);
-            when(userLookupService.findByBasicUsername("alice"))
+            when(userLookupService.verifyBasicCredentials("alice", "secret"))
                     .thenReturn(Optional.of(basicUser("alice", TENANT_PDP, "alice", "encoded-secret")));
-            when(passwordEncoder.matches("secret", "encoded-secret")).thenReturn(true);
 
             val sut = handler();
             sut.authenticate(request);
             sut.authenticate(request);
 
-            verify(passwordEncoder, times(1)).matches(any(), any());
+            verify(userLookupService, times(1)).verifyBasicCredentials(any(), any());
         }
 
         @Test
-        @DisplayName("identical failed Basic header in two consecutive calls hits the cache and only invokes the encoder once")
+        @DisplayName("identical failed Basic header in two consecutive calls hits the cache and only verifies once")
         void whenSameInvalidBasicHeaderTwiceThenSecondCallStillFailsFromCache() {
             val header = basicHeader("alice", "wrong");
             when(request.getHeader(AUTHORIZATION)).thenReturn(header);
             when(properties.isAllowBasicAuth()).thenReturn(true);
-            when(userLookupService.findByBasicUsername("alice"))
-                    .thenReturn(Optional.of(basicUser("alice", TENANT_PDP, "alice", "encoded-secret")));
-            when(passwordEncoder.matches("wrong", "encoded-secret")).thenReturn(false);
+            when(userLookupService.verifyBasicCredentials("alice", "wrong")).thenReturn(Optional.empty());
 
             val sut = handler();
             assertThatThrownBy(() -> sut.authenticate(request)).isInstanceOf(HttpAuthenticationException.class);
             assertThatThrownBy(() -> sut.authenticate(request)).isInstanceOf(HttpAuthenticationException.class);
 
-            verify(passwordEncoder, times(1)).matches(any(), any());
+            verify(userLookupService, times(1)).verifyBasicCredentials(any(), any());
         }
     }
 
@@ -423,16 +496,15 @@ class CachingHttpAuthHandlerTests {
         void whenMaxSizeNotPositiveThenThrows(long maxSize) {
             val positiveTtl = Duration.ofMinutes(5);
             val negativeTtl = Duration.ofSeconds(5);
-            assertThatThrownBy(() -> new CachingHttpAuthHandler(properties, userLookupService, passwordEncoder, null,
-                    positiveTtl, negativeTtl, maxSize)).isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("maxSize");
+            assertThatThrownBy(() -> new CachingHttpAuthHandler(properties, userLookupService, null, positiveTtl,
+                    negativeTtl, maxSize)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxSize");
         }
 
         @Test
         @DisplayName("accepts positive maxSize")
         void whenMaxSizePositiveThenConstructs() {
-            assertThatCode(() -> new CachingHttpAuthHandler(properties, userLookupService, passwordEncoder, null,
-                    Duration.ofMinutes(5), Duration.ofSeconds(5), 100L)).doesNotThrowAnyException();
+            assertThatCode(() -> new CachingHttpAuthHandler(properties, userLookupService, null, Duration.ofMinutes(5),
+                    Duration.ofSeconds(5), 100L)).doesNotThrowAnyException();
         }
     }
 
@@ -447,7 +519,7 @@ class CachingHttpAuthHandlerTests {
         @DisplayName("non-JWT success uses the configured positive TTL")
         void whenSuccessHasNoExpiryThenPositiveTtlApplies() {
             val expiry  = new TtlExpiry(POSITIVE, NEGATIVE);
-            val outcome = new Outcome.Success(new HttpAuthResult("default"), null);
+            val outcome = new Outcome.Success(new HttpAuthResult("default", null), null);
 
             assertThat(expiry.expireAfterCreate("k", outcome, 0L)).isEqualTo(POSITIVE.toNanos());
         }
@@ -457,7 +529,7 @@ class CachingHttpAuthHandlerTests {
         void whenJwtExpiresBeforePositiveTtlThenTtlIsShortened() {
             val expiry           = new TtlExpiry(POSITIVE, NEGATIVE);
             val thirtyOutFromNow = Instant.now().plusSeconds(30);
-            val outcome          = new Outcome.Success(new HttpAuthResult("default"), thirtyOutFromNow);
+            val outcome          = new Outcome.Success(new HttpAuthResult("default", null), thirtyOutFromNow);
 
             val ttl = expiry.expireAfterCreate("k", outcome, 0L);
 
@@ -470,7 +542,7 @@ class CachingHttpAuthHandlerTests {
         void whenJwtExpiresAfterPositiveTtlThenPositiveTtlApplies() {
             val expiry  = new TtlExpiry(POSITIVE, NEGATIVE);
             val farOut  = Instant.now().plus(Duration.ofHours(1));
-            val outcome = new Outcome.Success(new HttpAuthResult("default"), farOut);
+            val outcome = new Outcome.Success(new HttpAuthResult("default", null), farOut);
 
             assertThat(expiry.expireAfterCreate("k", outcome, 0L)).isEqualTo(POSITIVE.toNanos());
         }
@@ -480,9 +552,19 @@ class CachingHttpAuthHandlerTests {
         void whenJwtExpiryAlreadyPastThenTtlIsZero() {
             val expiry  = new TtlExpiry(POSITIVE, NEGATIVE);
             val past    = Instant.now().minusSeconds(10);
-            val outcome = new Outcome.Success(new HttpAuthResult("default"), past);
+            val outcome = new Outcome.Success(new HttpAuthResult("default", null), past);
 
             assertThat(expiry.expireAfterCreate("k", outcome, 0L)).isZero();
+        }
+
+        @Test
+        @DisplayName("JWT success with an exp beyond the nanosecond range does not throw and clamps to the positive TTL")
+        void whenJwtExpiryBeyondNanoRangeThenPositiveTtlApplies() {
+            val expiry    = new TtlExpiry(POSITIVE, NEGATIVE);
+            val farBeyond = Instant.now().plus(Duration.ofDays(365L * 1000));
+            val outcome   = new Outcome.Success(new HttpAuthResult("default", null), farBeyond);
+
+            assertThat(expiry.expireAfterCreate("k", outcome, 0L)).isEqualTo(POSITIVE.toNanos());
         }
 
         @Test

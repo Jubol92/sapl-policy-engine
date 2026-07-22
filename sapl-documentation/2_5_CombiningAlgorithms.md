@@ -46,9 +46,10 @@ This reads naturally: "priority to deny, or permit by default." The notation sep
 |-----------|------------------|
 | `deny`    | `DENY`           |
 | `permit`  | `PERMIT`         |
+| `suspend` | `SUSPEND`        |
 | `abstain` | `NOT_APPLICABLE` |
 
-**Error handling** determines how the final `INDETERMINATE` result of the combining process is presented. The clause is optional; when omitted, `errors abstain` applies.
+**Error handling** determines how the final `INDETERMINATE` result of the combining process is presented. The clause is optional. When omitted, `errors abstain` applies.
 
 | Handling           | Effect on final result                                                                                                                                                                  |
 |--------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -60,12 +61,12 @@ This reads naturally: "priority to deny, or permit by default." The notation sep
 
 These three concerns interact to determine the possible result space:
 
-| Default            | Error handling     | Possible results                                              |
-|--------------------|--------------------|---------------------------------------------------------------|
-| `deny` or `permit` | `errors abstain`   | `PERMIT`, `DENY`, `SUSPEND`                                   |
-| `abstain`          | `errors abstain`   | `PERMIT`, `DENY`, `SUSPEND`, `NOT_APPLICABLE`                 |
-| `deny` or `permit` | `errors propagate` | `PERMIT`, `DENY`, `SUSPEND`, `INDETERMINATE`                  |
-| `abstain`          | `errors propagate` | `PERMIT`, `DENY`, `SUSPEND`, `NOT_APPLICABLE`, `INDETERMINATE` |
+| Default                       | Error handling     | Possible results                                               |
+|-------------------------------|--------------------|----------------------------------------------------------------|
+| `deny`, `permit`, or `suspend`| `errors abstain`   | `PERMIT`, `DENY`, `SUSPEND`                                    |
+| `abstain`                     | `errors abstain`   | `PERMIT`, `DENY`, `SUSPEND`, `NOT_APPLICABLE`                  |
+| `deny`, `permit`, or `suspend`| `errors propagate` | `PERMIT`, `DENY`, `SUSPEND`, `INDETERMINATE`                   |
+| `abstain`                     | `errors propagate` | `PERMIT`, `DENY`, `SUSPEND`, `NOT_APPLICABLE`, `INDETERMINATE` |
 
 If you choose a non-abstain default and omit the error handling clause, the PEP sees concrete decisions only (`PERMIT`, `DENY`, or `SUSPEND`). Errors and missing policies are absorbed into the default. Add `errors propagate` when the PEP must distinguish errors from normal denials.
 
@@ -146,10 +147,10 @@ Any `DENY` vote wins over any number of `PERMIT` or `SUSPEND` votes. This is the
 If no policy votes `DENY`, the result depends on what other concrete votes were cast:
 
 - All concrete votes agree (all `PERMIT`, or all `SUSPEND`) → that decision wins, with merged constraints.
-- Concrete votes disagree on the non-priority decisions (`PERMIT` and `SUSPEND` in different policies) → the per-priority chain `DENY > SUSPEND > PERMIT` decides: `SUSPEND` wins. Only the winner's constraints survive; the loser's vote remains in `contributingVotes` but its obligations/advice are dropped.
+- Concrete votes disagree on the non-priority decisions (`PERMIT` and `SUSPEND` in different policies) → the per-priority chain `DENY > SUSPEND > PERMIT` decides: `SUSPEND` wins. Only the winner's constraints survive. The loser's vote remains in `contributingVotes` but its obligations/advice are dropped.
 - No concrete vote → default applies.
 
-**With `errors propagate`:** An error whose outcome marker includes `DENY` is critical and blocks any non-`DENY` concrete result; the algorithm returns `INDETERMINATE`. An error whose outcome cannot include `DENY` does not block. See [Extended Indeterminate](#extended-indeterminate-and-criticality).
+**With `errors propagate`:** An error whose outcome marker includes `DENY` is critical and blocks any non-`DENY` concrete result. The algorithm returns `INDETERMINATE`. An error whose outcome cannot include `DENY` does not block. See [Extended Indeterminate](#extended-indeterminate-and-criticality).
 
 #### `priority permit`
 
@@ -163,13 +164,13 @@ If no policy votes `PERMIT`, the algorithm resolves the remaining concretes by c
 
 Any `SUSPEND` vote wins over any number of `PERMIT` or `DENY` votes. Use this when an explicit suspension policy must override otherwise-applicable permits and denies, for example a maintenance-window policy that pauses all access.
 
-If no policy votes `SUSPEND`, the chain `SUSPEND > DENY > PERMIT` decides among the remaining concretes: `DENY` wins over `PERMIT`. Both `SUSPEND` and `DENY` are denial-flavoured outcomes; under suspend-priority, denial outranks permission.
+If no policy votes `SUSPEND`, the chain `SUSPEND > DENY > PERMIT` decides among the remaining concretes: `DENY` wins over `PERMIT`. Both `SUSPEND` and `DENY` are denial-flavoured outcomes. Under suspend-priority, denial outranks permission.
 
 **With `errors propagate`:** An error whose outcome marker includes `SUSPEND` is critical.
 
 #### `unanimous`
 
-All applicable policies must agree on effect. If every applicable policy votes the same concrete decision (`PERMIT`, `DENY`, or `SUSPEND`), the result is that decision with merged constraints. If policies disagree, the disagreement is treated according to the error handling setting: as abstain (falling through to the default) or as `INDETERMINATE`.
+All applicable policies must agree on effect. If every applicable policy votes the same concrete decision (`PERMIT`, `DENY`, or `SUSPEND`), the result is that decision with merged constraints. If policies disagree, the disagreement is treated according to the error handling setting, as abstain (falling through to the default) or as `INDETERMINATE`.
 
 Transformation uncertainty applies: if all policies vote `PERMIT` but more than one includes a transformation, the unanimous permit cannot be returned. The same applies for `SUSPEND` with conflicting transformations.
 
@@ -177,7 +178,7 @@ Transformation uncertainty applies: if all policies vote `PERMIT` but more than 
 
 #### `unique`
 
-Exactly one policy must have a matching target expression. If no policy matches, the default applies. If more than one policy matches, this is a configuration error: with `errors abstain`, the result is the default; with `errors propagate`, the result is `INDETERMINATE`.
+Exactly one policy must have a matching target expression. If no policy matches, the default applies. If more than one policy matches, this is a configuration error. With `errors abstain`, the result is the default. With `errors propagate`, the result is `INDETERMINATE`.
 
 When exactly one policy matches, the result is that policy's vote (`PERMIT`, `DENY`, `SUSPEND`, or `INDETERMINATE` if the policy itself errors). `SUSPEND` and `INDETERMINATE` both count as applicable for the uniqueness check.
 

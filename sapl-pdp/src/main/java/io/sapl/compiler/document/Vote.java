@@ -126,6 +126,20 @@ public final class Vote implements Voter, TracedDecision {
     }
 
     /**
+     * Returns a copy of this vote with its outcome replaced. Used by
+     * set-level combiners to complete the could-have-been effect set of an
+     * INDETERMINATE result over the policies a decision short-circuit did not
+     * fold, so that an enclosing priority combiner judges criticality
+     * correctly. Decision, errors, contributing votes, and voter are kept.
+     *
+     * @param outcome the replacement outcome
+     * @return a copy carrying {@code outcome}
+     */
+    public Vote withOutcome(Outcome outcome) {
+        return new Vote(authorizationDecision, errors, contributingVotes, voter, outcome);
+    }
+
+    /**
      * Returns a copy with {@code newVote} appended to the contributing votes.
      */
     public Vote withVote(Vote newVote) {
@@ -143,6 +157,7 @@ public final class Vote implements Voter, TracedDecision {
             case ABSTAIN -> this;
             case DENY    -> replaceDecision(Decision.DENY, Outcome.DENY);
             case PERMIT  -> replaceDecision(Decision.PERMIT, Outcome.PERMIT);
+            case SUSPEND -> replaceDecision(Decision.SUSPEND, Outcome.SUSPEND);
             };
         }
         if (authorizationDecision.decision() == Decision.INDETERMINATE) {
@@ -165,7 +180,7 @@ public final class Vote implements Voter, TracedDecision {
 
     /**
      * Converts this vote to a trace ObjectValue. Carries the vote's pure
-     * decision data; subscription/attribute trace lives in the trigger-
+     * decision data. Subscription/attribute trace lives in the trigger-
      * loop wrapper and is not part of {@code Vote.toTrace()}. The result
      * is cached after the first call.
      */

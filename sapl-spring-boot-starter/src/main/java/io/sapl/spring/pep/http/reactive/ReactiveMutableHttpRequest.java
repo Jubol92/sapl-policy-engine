@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,13 +34,14 @@ import lombok.val;
 
 /**
  * Reactive-backed {@link MutableHttpRequest}. Collects header and attribute
- * mutations applied by constraint handlers, then materialises them as a
- * mutated {@link ServerHttpRequest} (and {@link ServerWebExchange}) when
+ * mutations applied by constraint handlers,
+ * then materialises them as a mutated {@link ServerHttpRequest} (and
+ * {@link ServerWebExchange}) when
  * {@link #applyTo(ServerWebExchange)} is called by the PEP filter.
  * <p>
- * The original request is never modified. The PEP filter discards the
- * wrapper and forwards the original request when {@link #isModified()}
- * returns {@code false}.
+ * The original request is never modified. The PEP filter discards the wrapper
+ * and forwards the original request when
+ * {@link #isModified()} returns {@code false}.
  */
 public final class ReactiveMutableHttpRequest implements MutableHttpRequest {
 
@@ -56,19 +58,21 @@ public final class ReactiveMutableHttpRequest implements MutableHttpRequest {
 
     @Override
     public void setHeader(String name, String value) {
-        removedHeaders.remove(name);
-        headerOverrides.put(name, new ArrayList<>(List.of(value)));
+        val key = canonical(name);
+        removedHeaders.remove(key);
+        headerOverrides.put(key, new ArrayList<>(List.of(value)));
         modified = true;
     }
 
     @Override
     public void addHeader(String name, String value) {
-        if (removedHeaders.remove(name)) {
-            headerOverrides.put(name, new ArrayList<>(List.of(value)));
+        val key = canonical(name);
+        if (removedHeaders.remove(key)) {
+            headerOverrides.put(key, new ArrayList<>(List.of(value)));
             modified = true;
             return;
         }
-        val current = headerOverrides.computeIfAbsent(name, k -> {
+        val current = headerOverrides.computeIfAbsent(key, k -> {
             val existing = original.getHeaders().get(name);
             return existing == null ? new ArrayList<>() : new ArrayList<>(existing);
         });
@@ -78,8 +82,9 @@ public final class ReactiveMutableHttpRequest implements MutableHttpRequest {
 
     @Override
     public void removeHeader(String name) {
-        headerOverrides.remove(name);
-        removedHeaders.add(name);
+        val key = canonical(name);
+        headerOverrides.remove(key);
+        removedHeaders.add(key);
         modified = true;
     }
 
@@ -100,8 +105,9 @@ public final class ReactiveMutableHttpRequest implements MutableHttpRequest {
     }
 
     /**
-     * Returns the mutated exchange when any header or attribute mutation
-     * happened, otherwise the original exchange unchanged.
+     * Returns the mutated exchange when any header or attribute mutation happened,
+     * otherwise the original exchange
+     * unchanged.
      */
     public ServerWebExchange applyTo(ServerWebExchange exchange) {
         if (!modified) {
@@ -116,6 +122,10 @@ public final class ReactiveMutableHttpRequest implements MutableHttpRequest {
             mutated.getAttributes().put(entry.getKey(), entry.getValue());
         }
         return mutated;
+    }
+
+    private static String canonical(String name) {
+        return name.toLowerCase(Locale.ROOT);
     }
 
     private ServerHttpRequest applyToRequest() {

@@ -141,4 +141,77 @@ class XmlFunctionLibraryTests {
         val investigator = (ObjectValue) reparsed;
         assertThat(investigator).containsEntry("name", Value.of("Carter")).containsEntry("sanity", Value.of("77"));
     }
+
+    @Test
+    @DisplayName("xmlToVal rejects an external-entity (XXE) payload without resolving it")
+    void whenXmlHasExternalEntityThenErrorAndNoFileRead() {
+        val xml = """
+                <!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+                <foo>&xxe;</foo>
+                """;
+
+        val result = XmlFunctionLibrary.xmlToVal(Value.of(xml));
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).contains("Failed to parse XML").doesNotContain("root:");
+    }
+
+    @Test
+    @DisplayName("xmlToVal rejects an entity-expansion (billion laughs) payload")
+    void whenXmlHasEntityExpansionThenError() {
+        val xml = """
+                <!DOCTYPE lolz [
+                  <!ENTITY lol "lol">
+                  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;">
+                  <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;">
+                ]>
+                <lolz>&lol3;</lolz>
+                """;
+
+        val result = XmlFunctionLibrary.xmlToVal(Value.of(xml));
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).contains("Failed to parse XML");
+    }
+
+    @Test
+    @DisplayName("valToXml returns an error for an error value instead of throwing")
+    void whenErrorValueToXmlThenReturnsError() {
+        val result = XmlFunctionLibrary.valToXml(Value.error("The stars are not right."));
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).startsWith("Failed to convert value to XML:");
+    }
+
+    @Test
+    @DisplayName("valToXml returns an error for an undefined value instead of throwing")
+    void whenUndefinedValueToXmlThenReturnsError() {
+        val result = XmlFunctionLibrary.valToXml(Value.UNDEFINED);
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).startsWith("Failed to convert value to XML:");
+    }
+
+    @Test
+    void whenSerializedOutputExceedsMaximumThenReturnsError() {
+        val object = ObjectValue.builder().put("payload", oversizedOutputText()).build();
+
+        val result = XmlFunctionLibrary.valToXml(object);
+
+        assertThat(result).isInstanceOfSatisfying(ErrorValue.class,
+                error -> assertThat(error.message()).contains("Output exceeds the maximum length"));
+    }
+
+    @Test
+    void whenXmlExceedsMaxInputThenError() {
+        val oversized = "<a>" + "x".repeat(2 * 1024 * 1024) + "</a>";
+        val result    = XmlFunctionLibrary.xmlToVal(Value.of(oversized));
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).contains("exceeds the maximum length");
+    }
+
+    private static Value oversizedOutputText() {
+        return Value.of("a".repeat(TextOutputLimits.MAX_OUTPUT_CHARS));
+    }
 }

@@ -40,23 +40,26 @@ import reactor.core.publisher.Mono;
 
 /**
  * Reactive-backed {@link MutableHttpResponse}. Buffers status, headers, and
- * body so that constraint handlers attached to the response or denial
- * signals can read what the controller produced and replace any of it
- * before the response is committed to the client. Call {@link #commit()}
- * once handlers have run to flush the buffer to the underlying response.
+ * body so that constraint handlers attached
+ * to the response or denial signals can read what the controller produced and
+ * replace any of it before the response is
+ * committed to the client. Call {@link #commit()} once handlers have run to
+ * flush the buffer to the underlying
+ * response.
  * <p>
- * The class extends {@link ServerHttpResponseDecorator}, so it can be
- * passed to {@link org.springframework.web.server.WebFilterChain} as the
- * exchange's response. {@code writeWith} captures every emitted
- * {@link DataBuffer} into an in-memory byte buffer instead of forwarding
- * to the underlying response.
+ * The class extends {@link ServerHttpResponseDecorator}, so it can be passed to
+ * {@link org.springframework.web.server.WebFilterChain} as the exchange's
+ * response. {@code writeWith} captures every
+ * emitted {@link DataBuffer} into an in-memory byte buffer instead of
+ * forwarding to the underlying response.
  * <p>
- * Performance: every controller byte is captured in memory and re-emitted
- * on commit. This is fine for typical HTTP responses but is unsuitable for
- * unbounded streaming bodies. Callers that do not need response-level
- * mutation should not wrap at all; the SAPL HTTP PEP web filter installs
- * this wrapper only when the active enforcement plan schedules at least
- * one handler at the response signal.
+ * Performance: every controller byte is captured in memory and re-emitted on
+ * commit. This is fine for typical HTTP
+ * responses but is unsuitable for unbounded streaming bodies. Callers that do
+ * not need response-level mutation should
+ * not wrap at all. The SAPL HTTP PEP web filter installs this wrapper only when
+ * the active enforcement plan schedules
+ * at least one handler at the response signal.
  */
 public final class ReactiveMutableHttpResponse extends ServerHttpResponseDecorator implements MutableHttpResponse {
 
@@ -138,18 +141,17 @@ public final class ReactiveMutableHttpResponse extends ServerHttpResponseDecorat
 
     @Override
     public @NonNull Mono<Void> writeWith(@NonNull Publisher<? extends DataBuffer> body) {
-        return Flux.from(body).collectList().doOnNext(buffers -> {
-            val total = buffers.stream().mapToInt(DataBuffer::readableByteCount).sum();
-            val all   = new byte[total];
-            var i     = 0;
-            for (val buf : buffers) {
-                val len = buf.readableByteCount();
-                buf.read(all, i, len);
-                DataBufferUtils.release(buf);
-                i += len;
+        // join releases accumulated buffers on error/cancel. We release the joined
+        // buffer on success.
+        return DataBufferUtils.join(Flux.from(body)).map(joined -> {
+            try {
+                val all = new byte[joined.readableByteCount()];
+                joined.read(all);
+                return all;
+            } finally {
+                DataBufferUtils.release(joined);
             }
-            capturedBody = all;
-        }).then();
+        }).doOnNext(all -> capturedBody = all).then();
     }
 
     @Override
@@ -159,7 +161,7 @@ public final class ReactiveMutableHttpResponse extends ServerHttpResponseDecorat
 
     @Override
     public @NonNull Mono<Void> setComplete() {
-        // Captured by the wrapper; the surrounding PEP filter calls commit() to
+        // Captured by the wrapper. The surrounding PEP filter calls commit() to
         // flush. Forwarding to the delegate here would commit the underlying
         // response prematurely and cause subsequent writes from commit() to
         // fail with UnsupportedOperationException.
@@ -167,10 +169,11 @@ public final class ReactiveMutableHttpResponse extends ServerHttpResponseDecorat
     }
 
     /**
-     * Flushes the buffered status, headers, and body to the underlying
-     * response. Returns a {@link Mono} that completes when the underlying
-     * response has accepted the bytes. Idempotent on repeated body writes
-     * is left to the underlying response semantics.
+     * Flushes the buffered status, headers, and body to the underlying response.
+     * Returns a {@link Mono} that completes
+     * when the underlying response has accepted the bytes. Idempotent on repeated
+     * body writes is left to the underlying
+     * response semantics.
      */
     public Mono<Void> commit() {
         return Mono.defer(() -> {
@@ -184,6 +187,8 @@ public final class ReactiveMutableHttpResponse extends ServerHttpResponseDecorat
             if (capturedBody.length == 0) {
                 return delegate.setComplete();
             }
+            // Sync Content-Length with the written bytes in case the body was rewritten.
+            delegate.getHeaders().setContentLength(capturedBody.length);
             val buffer = delegate.bufferFactory().wrap(capturedBody);
             return delegate.writeWith(Mono.just(buffer));
         });

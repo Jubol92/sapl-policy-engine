@@ -20,6 +20,9 @@ package io.sapl.spring.pep.streaming;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -44,20 +47,21 @@ import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 
 /**
- * Integration tests for {@link StreamingPipeline}: drives the full
- * Reactor adapter end-to-end with controlled PDP and RAP sources to
- * validate observable subscriber behaviour, the lazy RAP subscription
- * lifecycle, and per-item enforcement plumbing.
+ * Integration tests for {@link StreamingPipeline}: drives the full Reactor
+ * adapter end-to-end with controlled PDP and
+ * RAP sources to validate observable subscriber behaviour, the lazy RAP
+ * subscription lifecycle, and per-item
+ * enforcement plumbing.
  * <p>
  * Two complementary nested suites:
  * <ul>
- * <li>{@code ItemFlow} (Layer C) -- validates events the pipeline
- * constructs from RAP payloads as a function of current FSM state.
- * Spec source: "Pre-classification B" diagram.</li>
- * <li>{@code Lifecycle} (Layer D) -- validates Reactor lifecycle
- * propagation: RAP completion / error, PDP error, DENY termination,
- * boundary signals under {@code signalTransitions}, RAP subscription
- * lazy / pause-and-resume.</li>
+ * <li>{@code ItemFlow} (Layer C) -- validates events the pipeline constructs
+ * from RAP payloads as a function of current
+ * FSM state. Spec source: "Pre-classification B" diagram.</li>
+ * <li>{@code Lifecycle} (Layer D) -- validates Reactor lifecycle propagation:
+ * RAP completion / error, PDP error, DENY
+ * termination, boundary signals under {@code signalTransitions}, RAP
+ * subscription lazy / pause-and-resume.</li>
  * </ul>
  */
 class StreamingPipelineTests {
@@ -71,7 +75,6 @@ class StreamingPipelineTests {
         Sinks.Many<Object>                rap                        = Sinks.many().unicast().onBackpressureBuffer();
         EnforcementPlan                   plan                       = new EnforcementPlan(java.util.Map.of());
         AtomicInteger                     rapSupplierInvocationCount = new AtomicInteger();
-        boolean                           terminateOnItemEnforcementFailure;
         boolean                           pauseRapDuringSuspend;
         boolean                           signalTransitions;
 
@@ -80,8 +83,8 @@ class StreamingPipelineTests {
                 rapSupplierInvocationCount.incrementAndGet();
                 return rap.asFlux();
             };
-            return StreamingPipeline.create(terminateOnItemEnforcementFailure, pauseRapDuringSuspend, pdp.asFlux(),
-                    d -> plan, supplier, signalTransitions);
+            return StreamingPipeline.create(pauseRapDuringSuspend, pdp.asFlux(), d -> plan, supplier,
+                    signalTransitions);
         }
 
         void emitPermit() {
@@ -174,9 +177,8 @@ class StreamingPipelineTests {
         }
 
         @Test
-        void perItemFailureWithTerminateFlagTrueErrorsTheSubscription() {
-            Harness h = new Harness();
-            h.terminateOnItemEnforcementFailure = true;
+        void perItemFailureErrorsTheSubscription() {
+            Harness         h           = new Harness();
             EnforcementPlan failingPlan = mock(EnforcementPlan.class);
             when(failingPlan.enforceDecisionConstraints(any())).thenReturn(false);
             when(failingPlan.execute(any(Signal.class), anyBoolean()))
@@ -186,29 +188,6 @@ class StreamingPipelineTests {
 
             StepVerifier.create(out).then(h::emitPermit).then(() -> h.emitRap("doomed"))
                     .expectError(AccessDeniedException.class).verify(TIMEOUT);
-        }
-
-        @Test
-        void perItemFailureWithTerminateFlagFalseDoesNotErrorTheSubscription() {
-            Harness h = new Harness();
-            h.terminateOnItemEnforcementFailure = false;
-            EnforcementPlan failingPlan = mock(EnforcementPlan.class);
-            when(failingPlan.enforceDecisionConstraints(any())).thenReturn(false);
-            when(failingPlan.execute(any(Signal.class), anyBoolean()))
-                    .thenReturn(new EnforcementResult<>(Maybe.absent(), true));
-            h.plan = failingPlan;
-            Flux<Object> out = h.create();
-
-            // After per-item failure, the pipeline transitions to suspended.
-            // The next PERMIT should resume items flowing.
-            EnforcementPlan goodPlan = mock(EnforcementPlan.class);
-            when(goodPlan.enforceDecisionConstraints(any())).thenReturn(false);
-            when(goodPlan.execute(any(Signal.class), anyBoolean()))
-                    .thenAnswer(inv -> new EnforcementResult<>(Maybe.of(extractValue(inv.getArgument(0))), false));
-
-            StepVerifier.create(out.take(1)).then(h::emitPermit).then(() -> h.emitRap("doomed"))
-                    .then(() -> h.plan = goodPlan).then(h::emitPermit).then(() -> h.emitRap("recovered"))
-                    .expectNext("recovered").verifyComplete();
         }
 
         @Test
@@ -295,6 +274,14 @@ class StreamingPipelineTests {
         }
 
         @Test
+        void whenPdpCompletesAfterPermitThenStreamTerminatesWithError() {
+            Harness      h   = new Harness();
+            Flux<Object> out = h.create();
+
+            StepVerifier.create(out).then(h::emitPermit).then(h::completePdp).expectError().verify(TIMEOUT);
+        }
+
+        @Test
         void boundarySignalsAreVisibleWhenSignalTransitionsIsTrue() {
             Harness h = new Harness();
             h.signalTransitions = true;
@@ -360,7 +347,7 @@ class StreamingPipelineTests {
 
             // After downstream completes (via take(1)), the pipeline should
             // tear down the subscriptions. Subsequent emissions should not
-            // resurrect anything; the sink can no longer push to a live
+            // resurrect anything. The sink can no longer push to a live
             // subscriber.
             assertThat(h.pdp.currentSubscriberCount()).isZero();
             assertThat(h.rap.currentSubscriberCount()).isZero();
@@ -380,6 +367,124 @@ class StreamingPipelineTests {
                     .verifyComplete();
 
             assertThat(suspendCount.get()).isZero();
+        }
+    }
+
+    @Nested
+    @DisplayName("Lifecycle and error signal enforcement against the last-active Permitting plan")
+    class LifecycleSignalEnforcement {
+
+        @Test
+        void completeAndTerminationSignalsFireOnRapCompletion() {
+            Harness         h    = new Harness();
+            EnforcementPlan plan = permittingPlanWithoutFailures();
+            h.plan = plan;
+            Flux<Object> out = h.create();
+
+            StepVerifier.create(out).then(h::emitPermit).then(h::completeRap).verifyComplete();
+
+            verify(plan, times(1)).enforceComplete();
+            verify(plan, times(1)).enforceTermination();
+            verify(plan, times(1)).enforceAfterTermination();
+        }
+
+        @Test
+        void cancelSignalFiresWhenSubscriberCancels() {
+            Harness         h    = new Harness();
+            EnforcementPlan plan = permittingPlanWithoutFailures();
+            h.plan = plan;
+            Flux<Object> out = h.create();
+
+            StepVerifier.create(out.take(1)).then(h::emitPermit).then(() -> h.emitRap("a")).expectNext("a")
+                    .verifyComplete();
+
+            verify(plan, times(1)).enforceCancel();
+        }
+
+        @Test
+        void subscriptionSignalFiresOnDownstreamRequestWhilePermitting() {
+            Harness         h    = new Harness();
+            EnforcementPlan plan = permittingPlanWithoutFailures();
+            h.plan = plan;
+            Flux<Object> out = h.create();
+
+            StepVerifier.create(out, 0).then(h::emitPermit).thenRequest(1).then(() -> h.emitRap("a")).expectNext("a")
+                    .thenCancel().verify(TIMEOUT);
+
+            verify(plan, atLeastOnce()).enforceSubscription(anyLong());
+        }
+
+        @Test
+        void subscriptionSignalDoesNotFireOnDownstreamRequestWhileSuspended() {
+            Harness         h    = new Harness();
+            EnforcementPlan plan = permittingPlanWithoutFailures();
+            h.plan = plan;
+            Flux<Object> out = h.create();
+
+            StepVerifier.create(out, 0).then(h::emitPermit).thenRequest(1).then(() -> h.emitRap("a")).expectNext("a")
+                    .then(h::emitSuspend).thenRequest(1).then(() -> h.emitRap("dropped")).thenAwait(TIMEOUT)
+                    .thenCancel().verify(TIMEOUT);
+
+            // While suspended the active plan is gone, so the stale plan's
+            // subscription obligation must not be enforced. Exactly one
+            // enforcement happened, for the request issued while permitting.
+            verify(plan, times(1)).enforceSubscription(anyLong());
+        }
+
+        @Test
+        void failingSubscriptionObligationWhileSuspendedDoesNotTerminateRecoverableSubscription() {
+            Harness         h    = new Harness();
+            EnforcementPlan plan = permittingPlanWithoutFailures();
+            doThrow(new AccessDeniedException("subscription obligation failed")).when(plan)
+                    .enforceSubscription(anyLong());
+            h.plan = plan;
+            Flux<Object> out = h.create();
+
+            // Initial demand of 1 is requested while still Pending, before any
+            // plan exists, so it is never enforced. Permit and consume an item,
+            // then suspend. A request issued while suspended must not enforce the
+            // stale plan's failing subscription obligation, which would otherwise
+            // terminate the suspended but recoverable subscription. On resume,
+            // items flow again.
+            StepVerifier.create(out, 1).then(h::emitPermit).then(() -> h.emitRap("a")).expectNext("a")
+                    .then(h::emitSuspend).thenRequest(1).then(h::emitPermit).then(() -> h.emitRap("b")).expectNext("b")
+                    .thenCancel().verify(TIMEOUT);
+        }
+
+        @Test
+        void errorSignalHandlersRunOnRapErrorAndMayRewriteTheThrowable() {
+            Harness               h      = new Harness();
+            EnforcementPlan       plan   = permittingPlanWithoutFailures();
+            RuntimeException      boom   = new RuntimeException("rap-boom");
+            IllegalStateException mapped = new IllegalStateException("redacted");
+            when(plan.enforceErrorConstraintsAsThrowable(boom)).thenReturn(mapped);
+            h.plan = plan;
+            Flux<Object> out = h.create();
+
+            StepVerifier.create(out).then(h::emitPermit).then(() -> h.errorRap(boom))
+                    .expectErrorSatisfies(e -> assertThat(e).isSameAs(mapped)).verify(TIMEOUT);
+
+            verify(plan, times(1)).enforceErrorConstraintsAsThrowable(boom);
+        }
+
+        @Test
+        void failingCompleteObligationDeniesAccessTerminally() {
+            Harness         h    = new Harness();
+            EnforcementPlan plan = permittingPlanWithoutFailures();
+            doThrow(new AccessDeniedException("complete obligation failed")).when(plan).enforceComplete();
+            h.plan = plan;
+            Flux<Object> out = h.create();
+
+            StepVerifier.create(out).then(h::emitPermit).then(h::completeRap).expectError(AccessDeniedException.class)
+                    .verify(TIMEOUT);
+        }
+
+        private static EnforcementPlan permittingPlanWithoutFailures() {
+            EnforcementPlan plan = mock(EnforcementPlan.class);
+            when(plan.enforceDecisionConstraints(any())).thenReturn(false);
+            when(plan.execute(any(Signal.class), anyBoolean()))
+                    .thenAnswer(inv -> new EnforcementResult<>(Maybe.of(extractValue(inv.getArgument(0))), false));
+            return plan;
         }
     }
 

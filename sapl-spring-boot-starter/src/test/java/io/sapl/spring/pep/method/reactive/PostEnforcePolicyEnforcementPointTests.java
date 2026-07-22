@@ -69,13 +69,14 @@ import reactor.test.StepVerifier;
 /**
  * End-to-end tests for the reactive @PostEnforce PEP, mirroring
  * {@code io.sapl.spring.pep.method.blocking.PostEnforcePolicyEnforcementPointTests}
- * scenario-for-scenario so the two PEPs are directly comparable.
+ * scenario-for-scenario so the two
+ * PEPs are directly comparable.
  * <p>
  * Same Miskatonic University Library scenario, same obligation set, same
- * expectations. Reactive-specific additions: empty-Mono coverage (RAP that
- * completes empty must still consult the PDP), Mono&lt;Void&gt; coverage
- * (mirrors blocking void semantics), and a Mono.error variant of the
- * RAP-exception case.
+ * expectations. Reactive-specific additions:
+ * empty-Mono coverage (RAP that completes empty must still consult the PDP),
+ * Mono&lt;Void&gt; coverage (mirrors
+ * blocking void semantics), and a Mono.error variant of the RAP-exception case.
  */
 @SpringBootTest(classes = PostEnforcePolicyEnforcementPointTests.MiskatonicArchiveTestApp.class)
 @WithMockUser(username = "armitage", roles = "FACULTY")
@@ -493,8 +494,8 @@ class PostEnforcePolicyEnforcementPointTests {
                     .thenReturn(Mono.just(decisionWithObligation(Obligation.LIBRARIAN_REDACTS)));
 
             StepVerifier.create(archive.closeTheWardedDoor()).verifyComplete();
-            // The Mapper would have substituted REDACTED_BY_LIBRARIAN if it ran;
-            // it skipped because the OutputSignal value is Maybe.absent for void.
+            // The Mapper would have substituted REDACTED_BY_LIBRARIAN if it ran.
+            // It skipped because the OutputSignal value is Maybe.absent for void.
         }
 
         @Test

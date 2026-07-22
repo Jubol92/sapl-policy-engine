@@ -171,11 +171,10 @@ public class AttributeConfiguration {
      * }
      */
 
-
     /*
-       Builds the bean for the AttributeRepository. Contains two hash maps. One hash map from the configuration id to
-       the attribute repository and the other from the PDP id to the current configuration id. If there is a load or
-       remove event: create the repository over the factory.
+     * Builds the bean for the AttributeRepository. Contains two hash maps. One hash map from the configuration id to
+     * the attribute repository and the other from the PDP id to the current configuration id. If there is a load or
+     * remove event: create the repository over the factory.
      */
     @Bean
     @Primary
@@ -187,8 +186,8 @@ public class AttributeConfiguration {
         // Register the repository to the config change and removes the old repository
         source.subscribe(event -> {
             if (event instanceof ConfigurationEvent.Load load) {
-                val pdpId    = load.configuration().pdpId();
-                val configId = load.configuration().configurationId();
+                val pdpId       = load.configuration().pdpId();
+                val configId    = load.configuration().configurationId();
                 val oldConfigId = pdpToConfig.put(pdpId, configId);
 
                 if (oldConfigId != null && !oldConfigId.equals(configId)) {
@@ -201,7 +200,7 @@ public class AttributeConfiguration {
                         k -> repoNode instanceof ObjectValue obj ? AttributeRepositoryFactory.create(obj, pdpId)
                                 : new InMemoryAttributeRepository());
             } else if (event instanceof ConfigurationEvent.Remove(String pdpId)) {
-                
+
                 val configId = pdpToConfig.remove(pdpId);
                 Optional.ofNullable(cache.remove(configId)).ifPresent(AttributeRepository::close);
             }
@@ -216,7 +215,8 @@ public class AttributeConfiguration {
         // as constructor injection. During the runtime the application references to this object. That's why
         // we're using a proxy
         // Only observe and close are routed. The objects within the map are built objects from the factory. For that
-        // case publish/remove are never used because only the observe function is used within the pdp. At this point the
+        // case publish/remove are never used because only the observe function is used within the pdp. At this point
+        // the
         // router doesn't have the information of the repository key, entity etc. to call a publish/remove anyways
         return new AttributeRepository() {
             @Override
@@ -250,8 +250,7 @@ public class AttributeConfiguration {
     // the broker bean to load all PIP's annotated with PolicyInformationPoint
     @Bean
     public AttributeBroker attributeBroker(AttributeRepository repository, ApplicationContext ctx) {
-        val pipBeans = Arrays.stream(ctx.getBeanNamesForAnnotation(PolicyInformationPoint.class))
-                .map(ctx::getBean)
+        val pipBeans = Arrays.stream(ctx.getBeanNamesForAnnotation(PolicyInformationPoint.class)).map(ctx::getBean)
                 .collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
 
         pipBeans.add(new UserPolicyInformationPoint());

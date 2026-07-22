@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Objects;
 
 import static io.sapl.api.model.StreamOperator.evalChild;
+import static io.sapl.api.shared.NameValidator.requireValidName;
 
 /**
  * Compiler for SAPL function calls.
@@ -48,6 +49,7 @@ import static io.sapl.api.model.StreamOperator.evalChild;
 @UtilityClass
 public class FunctionCallCompiler {
 
+    private static final String ERROR_INVALID_FUNCTION_NAME                  = "Invalid function name '%s'.";
     private static final String ERROR_PURE_FUNCTION_RECEIVED_STREAM_OPERATOR = "PureFunction cannot contain StreamOperator. Indicates an implementation bug.";
 
     public static CompiledExpression compile(FunctionCall call, CompilationContext ctx) {
@@ -56,6 +58,11 @@ public class FunctionCallCompiler {
 
     public static CompiledExpression compile(String functionName, List<Expression> arguments, SourceLocation location,
             CompilationContext ctx) {
+        try {
+            requireValidName(functionName);
+        } catch (IllegalArgumentException e) {
+            throw new SaplCompilerException(ERROR_INVALID_FUNCTION_NAME.formatted(functionName), e, location);
+        }
         if (arguments.isEmpty()) {
             return new NoArgsFunction(functionName, location);
         }
@@ -135,7 +142,7 @@ public class FunctionCallCompiler {
 
         @Override
         public long semanticHash() {
-            return SemanticHashing.ordered(KIND, functionName.hashCode());
+            return SemanticHashing.ordered(KIND, SemanticHashing.textHash(functionName));
         }
     }
 
@@ -191,7 +198,7 @@ public class FunctionCallCompiler {
             long hash = SemanticHashing.ordered(KIND, functionName.hashCode());
             for (val arg : arguments) {
                 val argHash = switch (arg) {
-                case Value v                -> (long) v.hashCode();
+                case Value v                -> SemanticHashing.valueHash(v);
                 case PureOperator p         -> p.semanticHash();
                 case StreamOperator ignored -> (long) arg.hashCode();
                 };

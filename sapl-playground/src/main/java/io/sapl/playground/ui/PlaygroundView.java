@@ -75,6 +75,7 @@ import io.sapl.compiler.document.Document;
 import io.sapl.compiler.document.DocumentCompiler;
 import io.sapl.compiler.document.TracedVote;
 import io.sapl.compiler.document.Vote;
+import io.sapl.pdp.SaplBuildInfo;
 import io.sapl.pdp.interceptors.ReportBuilderUtil;
 import io.sapl.pdp.interceptors.ReportTextRenderUtil;
 import io.sapl.playground.config.PermalinkConfiguration;
@@ -122,7 +123,7 @@ import java.util.stream.Collectors;
 @PageTitle("SAPL Playground")
 @JsModule("./copytoclipboard.js")
 @JavaScript("./fragment-reader.js")
-public class PlaygroundView extends Composite<VerticalLayout> {
+public final class PlaygroundView extends Composite<VerticalLayout> {
     @Serial
     private static final long serialVersionUID = SaplVersion.VERSION_UID;
 
@@ -206,6 +207,8 @@ public class PlaygroundView extends Composite<VerticalLayout> {
     private static final String FRAGMENT_PREFIX_EXAMPLE   = "example/";
     private static final String FRAGMENT_PREFIX_PERMALINK = "permalink/";
 
+    private static final String ERROR_SUBSCRIPTION = "Subscription error: ";
+
     private static final String JS_COPY_TO_CLIPBOARD     = "window.copyToClipboard($0)";
     private static final String JS_GET_URL_FRAGMENT      = "return window.getUrlFragment()";
     private static final String JS_REFRESH_CODEMIRROR    = "if (this.editor && this.editor.refresh) { this.editor.refresh(); }";
@@ -221,6 +224,21 @@ public class PlaygroundView extends Composite<VerticalLayout> {
                 window.removeEventListener('hashchange', window.playgroundHashListener);
                 delete window.playgroundHashListener;
             }
+            """;
+    private static final String JS_DETECT_COLOR_SCHEME   = """
+            var el = $0;
+            function isDark() {
+                var t = document.documentElement.getAttribute('data-theme');
+                if (t) return t === 'dark';
+                return window.matchMedia('(prefers-color-scheme: dark)').matches;
+            }
+            function notify() {
+                el.dispatchEvent(new CustomEvent('host-theme', {detail: {dark: isDark()}}));
+            }
+            notify();
+            new MutationObserver(notify)
+                .observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', notify);
             """;
 
     private static final String LABEL_AUTO_CLEAR                 = "Auto Clear";
@@ -273,7 +291,6 @@ public class PlaygroundView extends Composite<VerticalLayout> {
     private static final String MESSAGE_REACHED_SUFFIX            = ") reached";
     private static final String MESSAGE_SHARE_EXPLANATION         = "Share this link to preserve and share the current playground state including all policies, subscription, variables, and combining algorithm.";
     private static final String MESSAGE_STATE_TOO_MANY_POLICIES   = "State has too many policies. Maximum: ";
-    private static final String MESSAGE_SUBSCRIPTION_ERROR        = "Subscription error: ";
     private static final String MESSAGE_SUFFIX_KB                 = "KB";
 
     private static final String POLICY_NAME_PREFIX  = "Policy ";
@@ -338,6 +355,7 @@ public class PlaygroundView extends Composite<VerticalLayout> {
     private ComboBox<DefaultDecision> defaultDecisionComboBox;
     private ComboBox<ErrorHandling>   errorHandlingComboBox;
 
+    private ThemeToggleButton    themeToggle;
     private boolean              isDarkMode           = false;
     private boolean              isScrollLockActive;
     private boolean              isFollowLatestDecisionActive;
@@ -402,6 +420,7 @@ public class PlaygroundView extends Composite<VerticalLayout> {
         super.onAttach(attachEvent);
         checkInitialFragment();
         setupHashChangeListener();
+        detectHostColorScheme(attachEvent);
     }
 
     /*
@@ -946,7 +965,7 @@ public class PlaygroundView extends Composite<VerticalLayout> {
         log.error("Error in PDP subscription", error);
         getUI().ifPresent(userInterface -> userInterface.access(() -> {
             stopSubscription();
-            showNotification(MESSAGE_SUBSCRIPTION_ERROR + error.getMessage());
+            showNotification(ERROR_SUBSCRIPTION + error.getMessage());
         }));
     }
 
@@ -956,7 +975,7 @@ public class PlaygroundView extends Composite<VerticalLayout> {
      */
     private void handleSubscriptionComplete() {
         log.debug("PDP subscription completed");
-        activeSubscription = null;
+        getUI().ifPresent(userInterface -> userInterface.access(() -> activeSubscription = null));
     }
 
     /*
@@ -1552,6 +1571,7 @@ public class PlaygroundView extends Composite<VerticalLayout> {
     private Button createTabCloseButton() {
         val button = new Button(VaadinIcon.CLOSE_SMALL.create());
         button.addThemeVariants(ButtonVariant.LUMO_TERTIARY_INLINE, ButtonVariant.LUMO_SMALL);
+        button.addClassName("tab-close");
         button.getStyle().set(CSS_MARGIN_LEFT, CSS_VALUE_SIZE_0_25EM);
         return button;
     }
@@ -1780,10 +1800,10 @@ public class PlaygroundView extends Composite<VerticalLayout> {
         logoTitle.getStyle().set(CSS_FONT_SIZE, "1.1rem").set(CSS_FONT_WEIGHT, "800").set("letter-spacing", "-0.03em")
                 .set("line-height", "1");
 
-        val logoSubtitle = new Span("Playground");
+        val logoSubtitle = new Span("Playground " + SaplBuildInfo.version().replace("-SNAPSHOT", ""));
         logoSubtitle.getStyle().set(CSS_FONT_SIZE, "0.55rem").set(CSS_FONT_WEIGHT, "500")
                 .set(CSS_COLOR, "var(--vaadin-text-color-secondary)").set("letter-spacing", "0.04em")
-                .set(CSS_MARGIN_TOP, "-2px");
+                .set(CSS_MARGIN_TOP, "-2px").set(CSS_WHITE_SPACE, "nowrap");
 
         val logoText = new Div(logoTitle, logoSubtitle);
         logoText.getStyle().set("display", "flex").set("flex-direction", "column").set(CSS_GAP, "0");
@@ -1805,8 +1825,8 @@ public class PlaygroundView extends Composite<VerticalLayout> {
         val spacer = new Span();
         spacer.getStyle().set(CSS_FLEX_GROW, CSS_VALUE_ONE);
 
-        val themeToggle = new ThemeToggleButton();
-        themeToggle.addThemeToggleListener(event -> toggleColorScheme(event.isDarkMode()));
+        themeToggle = new ThemeToggleButton();
+        themeToggle.addThemeToggleListener(event -> applyColorScheme(event.isDarkMode()));
 
         val rightSection = new HorizontalLayout(homepageLink, shareButton, themeToggle);
         rightSection.setAlignItems(FlexComponent.Alignment.CENTER);
@@ -1838,10 +1858,28 @@ public class PlaygroundView extends Composite<VerticalLayout> {
         return button;
     }
 
-    private void toggleColorScheme(boolean darkMode) {
+    /*
+     * Detects the host page color scheme on attach and keeps the editors in sync
+     * with it. The application shell follows prefers-color-scheme automatically via
+     * the LIGHT_DARK color scheme, but the CodeMirror editors are separate web
+     * components whose theme is only driven from the server, so they must be
+     * aligned explicitly on the initial load and whenever the preference changes.
+     */
+    private void detectHostColorScheme(AttachEvent attachEvent) {
+        attachEvent.getUI().getPage().executeJs(JS_DETECT_COLOR_SCHEME, getElement());
+        getElement()
+                .addEventListener("host-theme",
+                        event -> applyColorScheme(event.getEventData().get("event.detail.dark").booleanValue()))
+                .addEventData("event.detail.dark");
+    }
+
+    private void applyColorScheme(boolean darkMode) {
         isDarkMode = darkMode;
+        if (themeToggle != null)
+            themeToggle.setDarkMode(isDarkMode);
+
         val scheme = isDarkMode ? ColorScheme.Value.DARK : ColorScheme.Value.LIGHT;
-        UI.getCurrent().getPage().setColorScheme(scheme);
+        getUI().ifPresent(ui -> ui.getPage().setColorScheme(scheme));
 
         policyTabContexts.values().forEach(ctx -> ctx.editor.setDarkTheme(isDarkMode));
         if (subscriptionEditor != null)

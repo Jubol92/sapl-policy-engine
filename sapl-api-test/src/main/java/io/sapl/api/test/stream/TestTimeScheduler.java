@@ -26,11 +26,14 @@ import java.util.PriorityQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Deterministic {@link TimeScheduler} for tests. Tasks are queued
- * and never run automatically; tests call {@link #advanceTo(Instant)}
- * to fire all tasks whose scheduled instant is at or before the
- * supplied time. Insertion order is preserved among tasks scheduled
- * for the same instant.
+ * Deterministic {@link TimeScheduler} for tests. A task scheduled for a future
+ * instant is queued. Tests call
+ * {@link #advanceTo(Instant)} to fire all tasks whose scheduled instant is at
+ * or before the supplied time. A task
+ * scheduled for an instant that has already passed fires immediately, mirroring
+ * the real scheduler (whose delay clamps
+ * to zero). Insertion order is preserved among tasks scheduled for the same
+ * instant.
  */
 public final class TestTimeScheduler implements TimeScheduler {
 
@@ -44,6 +47,12 @@ public final class TestTimeScheduler implements TimeScheduler {
 
     @Override
     public synchronized Cancellable scheduleAt(Instant when, Runnable task) {
+        if (!when.isAfter(currentTime)) {
+            // A past-due time fires immediately, matching RealTimeScheduler, so it is not
+            // stranded waiting for an advanceTo that never comes.
+            task.run();
+            return () -> {};
+        }
         val entry = new Entry(when, sequence.getAndIncrement(), task);
         queue.add(entry);
         return () -> {
@@ -54,10 +63,10 @@ public final class TestTimeScheduler implements TimeScheduler {
     }
 
     /**
-     * Advances the scheduler's current time to {@code target} and
-     * fires every queued task whose scheduled instant is at or
-     * before {@code target}, in scheduled-instant order (ties broken
-     * by insertion order).
+     * Advances the scheduler's current time to {@code target} and fires every
+     * queued task whose scheduled instant is at
+     * or before {@code target}, in scheduled-instant order (ties broken by
+     * insertion order).
      */
     public synchronized void advanceTo(Instant target) {
         if (target.isBefore(currentTime)) {
@@ -71,8 +80,7 @@ public final class TestTimeScheduler implements TimeScheduler {
     }
 
     /**
-     * Number of tasks still pending. Useful for assertions about
-     * cancellation.
+     * Number of tasks still pending. Useful for assertions about cancellation.
      */
     public synchronized int pendingCount() {
         return queue.size();

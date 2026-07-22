@@ -19,20 +19,30 @@ package io.sapl.node.auth;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
+import java.util.Collections;
+import java.util.List;
+
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimNames;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtDecoders;
 import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.SupplierJwtDecoder;
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
@@ -60,7 +70,7 @@ import io.sapl.node.auth.SaplJwtAuthenticationToken;
 import io.sapl.node.auth.SaplUser;
 import io.sapl.node.auth.SaplUserDetailsService;
 import io.sapl.node.auth.UserLookupService;
-import io.sapl.reactive.api.pdp.ReactivePolicyDecisionPoint;
+import io.sapl.api.pdp.StreamingPolicyDecisionPoint;
 import io.sapl.reactive.api.tenant.BlockingTenantResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -72,7 +82,6 @@ import lombok.val;
  */
 @Slf4j
 @Configuration
-@Profile("!cli")
 @EnableWebSecurity
 @RequiredArgsConstructor
 public class SecurityConfiguration {
@@ -189,7 +198,7 @@ public class SecurityConfiguration {
         val userDetailsService = saplUserDetailsService();
         return authentication -> {
             if (authentication == null) {
-                return ReactivePolicyDecisionPoint.DEFAULT_PDP_ID;
+                return StreamingPolicyDecisionPoint.DEFAULT_PDP_ID;
             }
             if (authentication instanceof SaplAuthenticationToken saplAuth) {
                 return saplAuth.getPdpId();
@@ -200,9 +209,9 @@ public class SecurityConfiguration {
             val principal = authentication.getPrincipal();
             if (principal instanceof UserDetails userDetails) {
                 return userDetailsService.resolveSaplUser(userDetails.getUsername()).map(SaplUser::pdpId)
-                        .orElse(ReactivePolicyDecisionPoint.DEFAULT_PDP_ID);
+                        .orElse(StreamingPolicyDecisionPoint.DEFAULT_PDP_ID);
             }
-            return ReactivePolicyDecisionPoint.DEFAULT_PDP_ID;
+            return StreamingPolicyDecisionPoint.DEFAULT_PDP_ID;
         };
     }
 
@@ -313,12 +322,41 @@ public class SecurityConfiguration {
         }
         return new SupplierJwtDecoder(() -> {
             try {
-                return JwtDecoders.fromIssuerLocation(jwtIssuerURI);
+                val decoder   = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(jwtIssuerURI);
+                val audiences = pdpProperties.getOauth().getAudiences();
+                decoder.setJwtValidator(
+                        jwtValidator(jwtIssuerURI, audiences, pdpProperties.getOauth().isAllowJwtWithoutExpiry()));
+                return decoder;
             } catch (Exception e) {
                 log.warn("OIDC discovery against issuer {} failed: {}; OAuth2 token validation will retry on the next "
                         + "request", jwtIssuerURI, e.getMessage());
                 throw new JwtException("OIDC issuer unavailable: " + e.getMessage(), e);
             }
         });
+    }
+
+    /**
+     * Builds the token validator for the configured issuer. The node rejects
+     * tokens without an {@code exp} claim unless the explicit insecure opt-in is
+     * set, matching the raw PDP HTTP and RSocket paths. When the audience allowlist
+     * is non-empty, the validator also rejects tokens minted for a different
+     * resource server on the same issuer.
+     *
+     * @param issuer the expected token issuer
+     * @param audiences the accepted audience values, or empty to disable the check
+     * @param allowJwtWithoutExpiry true to accept JWTs without an {@code exp} claim
+     * @return the combined token validator
+     */
+    static OAuth2TokenValidator<Jwt> jwtValidator(String issuer, List<String> audiences,
+            boolean allowJwtWithoutExpiry) {
+        val timestampValidator = new JwtTimestampValidator();
+        timestampValidator.setAllowEmptyExpiryClaim(allowJwtWithoutExpiry);
+        val issuerValidator = new JwtIssuerValidator(issuer);
+        if (audiences.isEmpty()) {
+            return JwtValidators.createDefaultWithValidators(List.of(timestampValidator, issuerValidator));
+        }
+        val audienceCheck = new JwtClaimValidator<Object>(JwtClaimNames.AUD,
+                aud -> aud instanceof List<?> audienceList && !Collections.disjoint(audienceList, audiences));
+        return JwtValidators.createDefaultWithValidators(List.of(timestampValidator, issuerValidator, audienceCheck));
     }
 }

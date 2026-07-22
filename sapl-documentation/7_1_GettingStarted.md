@@ -48,7 +48,7 @@ The action downloads the correct binary for the runner platform and adds it to t
 
 ### Quick Start
 
-This walkthrough sets up a working node from scratch, deploys a policy, and queries the PDP. No configuration files are needed. The built-in defaults work out of the box: no TLS, no authentication, policies loaded from the current directory.
+This walkthrough sets up a working node from scratch, deploys a policy, and queries the PDP. No configuration files are needed. The built-in defaults keep setup minimal: no TLS and policies loaded from the current directory. The node ships fail-closed and requires choosing an authentication mode before it starts. This walkthrough passes `--no-auth` to accept unauthenticated requests for local exploration.
 
 Create a working directory and a policy file:
 
@@ -61,7 +61,7 @@ Create `demo/tick.sapl`. This policy uses the built-in time PIP to grant access 
 ```
 policy "tick"
 permit
-  time.secondOf(<time.now>) % 5 == 0
+  time.secondOf(<time.now>) % 5 == 0;
 ```
 
 The `<time.now>` attribute is a stream. It emits the current UTC timestamp once per second. Every time a new value arrives, the PDP re-evaluates the policy and pushes an updated decision to all connected clients.
@@ -69,10 +69,10 @@ The `<time.now>` attribute is a stream. It emits the current UTC timestamp once 
 Start the server:
 
 ```shell
-cd demo && ./sapl
+cd demo && ./sapl --no-auth
 ```
 
-The node starts on `localhost:8080` with no TLS and no authentication required. No `pdp.json` is needed. When absent, the PDP uses the default combining algorithm (`PRIORITY_DENY` with `DENY` default and `PROPAGATE` error handling).
+The node starts on `localhost:8080` with no TLS. The `--no-auth` flag accepts unauthenticated requests for local exploration. Without an authentication choice the node fails closed and refuses to start. No `pdp.json` is needed. When absent, the PDP uses the default combining algorithm (`PRIORITY_DENY` with `DENY` default and `PROPAGATE` error handling).
 
 In a separate terminal, request a one-shot decision:
 
@@ -93,7 +93,7 @@ curl -s http://localhost:8080/api/pdp/decide-once -H 'Content-Type: application/
 
 </details>
 
-The response is a single JSON object. Depending on the current second, the decision is either `PERMIT` or `NOT_APPLICABLE`.
+The response is a single JSON object. Depending on the current second, the decision is either `PERMIT` or `DENY`. With the default `DENY` combining algorithm, the seconds where the policy does not apply resolve to `DENY` rather than `NOT_APPLICABLE`.
 
 Now try streaming. This is where SAPL shows its strength. The PDP holds the connection open and pushes a new decision every time the policy evaluation result changes:
 
@@ -114,7 +114,7 @@ curl -N http://localhost:8080/api/pdp/decide -H 'Content-Type: application/json'
 
 </details>
 
-Watch the output. Every few seconds, the decision flips between `PERMIT` and `NOT_APPLICABLE` as the current time crosses a multiple of five. The application does not need to poll. The PDP pushes changes as they happen.
+Watch the output. Every few seconds, the decision flips between `PERMIT` and `DENY` as the current time crosses a multiple of five. The application does not need to poll. The PDP pushes changes as they happen.
 
 Press `Ctrl+C` to stop the stream. The PDP cleans up the subscription automatically.
 
@@ -128,7 +128,7 @@ curl -s http://localhost:8080/actuator/health | jq .
 
 You should see `"status": "UP"` with a `pdps` detail block showing the state `LOADED`, the active combining algorithm, and the number of loaded documents. If a policy has a syntax error, the state changes to `ERROR` and the health status drops to `DOWN`.
 
-The info endpoint shows PDP configuration (this endpoint requires authentication in production; the snippet below assumes you started the node with `--io.sapl.node.allow-no-auth=true` for local exploration):
+The info endpoint shows PDP configuration. This endpoint requires authentication in production. Here it is reachable because the node was started with `--no-auth`:
 
 ```shell
 curl -s http://localhost:8080/actuator/info | jq .
@@ -164,13 +164,13 @@ Spring Boot automatically loads `config/application.yml` on startup. The `config
 Download the package for your distribution from the [releases page](https://github.com/heutelbeck/sapl-policy-engine/releases).
 
 ```shell
-sudo dpkg -i sapl_4.1.0-SNAPSHOT_amd64.deb
+sudo dpkg -i sapl_4.1.2_amd64.deb
 ```
 
 Or for RPM-based distributions:
 
 ```shell
-sudo rpm -i sapl-4.1.0-SNAPSHOT.x86_64.rpm
+sudo rpm -i sapl-4.1.2.x86_64.rpm
 ```
 
 #### What the Package Installs
@@ -255,7 +255,11 @@ The systemd unit runs with strict security restrictions: `NoNewPrivileges`, `Pro
 
 For container deployments, the server runs inside Docker while you use the local `sapl` binary for CLI operations like bundle creation and credential generation.
 
-The container image is `ghcr.io/heutelbeck/sapl-node`. Released versions use the version tag (e.g., `ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT`). The examples below use the current development tag `4.1.0-SNAPSHOT`. The Docker image defaults to `BUNDLES` mode with signature verification enabled. The node will not start until bundle security is configured.
+The container image is `ghcr.io/heutelbeck/sapl-node`. Released versions use the version tag (e.g., `ghcr.io/heutelbeck/sapl-node:4.1.2`). The examples below use the current development tag `4.1.2`. This is the original JVM image. It is the best default for sustained throughput, low tail latency, and deployments that load extension jars at runtime.
+
+SAPL Node also publishes minimal native images. The `ghcr.io/heutelbeck/sapl-node:<version>-min` tag is a multi architecture manifest for amd64 and arm64. Use `ghcr.io/heutelbeck/sapl-node:<version>-min-amd64` to pin x86_64 deployments. Use `ghcr.io/heutelbeck/sapl-node:<version>-min-arm64` to pin ARM64 deployments.
+
+The minimal images package the native binary on a distroless base. They are smaller, have less attack surface, and boot faster than the JVM image. The tradeoff is a lower performance ceiling under sustained load because there is no JIT, no ZGC, and no runtime loadable extension jars. All Docker images default to `BUNDLES` mode with signature verification enabled. The node will not start until bundle security is configured.
 
 To get started with signed bundles:
 
@@ -270,19 +274,19 @@ sapl bundle create -i ./policies -o ./bundles/default.saplbundle -k signing.pem
 Run the container, mounting the bundles directory and the public key:
 
 ```shell
-docker run -p 8443:8443 -v ./bundles:/pdp/data:ro -v ./signing.pub:/pdp/signing.pub:ro -e SERVER_ADDRESS=0.0.0.0 -e IO_SAPL_PDP_EMBEDDED_BUNDLESECURITY_PUBLICKEYPATH=/pdp/signing.pub ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT
+docker run -p 8443:8443 -v ./bundles:/pdp/data:ro -v ./signing.pub:/pdp/signing.pub:ro -e SERVER_ADDRESS=0.0.0.0 -e IO_SAPL_PDP_EMBEDDED_BUNDLESECURITY_PUBLICKEYPATH=/pdp/signing.pub ghcr.io/heutelbeck/sapl-node:4.1.2
 ```
 
 For development or evaluation without signing, disable signature verification:
 
 ```shell
-docker run -p 8443:8443 -v ./bundles:/pdp/data:ro -e SERVER_ADDRESS=0.0.0.0 -e IO_SAPL_PDP_EMBEDDED_BUNDLESECURITY_ALLOWUNSIGNED=true ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT
+docker run -p 8443:8443 -v ./bundles:/pdp/data:ro -e SERVER_ADDRESS=0.0.0.0 -e IO_SAPL_PDP_EMBEDDED_BUNDLESECURITY_ALLOWUNSIGNED=true ghcr.io/heutelbeck/sapl-node:4.1.2
 ```
 
 To use raw `.sapl` files instead of bundles (for learning or demos), override the policy source type:
 
 ```shell
-docker run -p 8443:8443 -v ./policies:/pdp/data:ro -e SERVER_ADDRESS=0.0.0.0 -e IO_SAPL_PDP_EMBEDDED_PDPCONFIGTYPE=DIRECTORY ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT
+docker run -p 8443:8443 -v ./policies:/pdp/data:ro -e SERVER_ADDRESS=0.0.0.0 -e IO_SAPL_PDP_EMBEDDED_PDPCONFIGTYPE=DIRECTORY ghcr.io/heutelbeck/sapl-node:4.1.2
 ```
 
 The `SERVER_ADDRESS=0.0.0.0` override is required so Docker's port mapping can reach the server. The default `127.0.0.1` only accepts connections from within the container.
@@ -292,7 +296,7 @@ Environment variables follow Spring Boot's naming convention: dots become unders
 You can also mount a full `application.yml` instead of using individual environment variables:
 
 ```shell
-docker run -p 8443:8443 -v ./config:/pdp/config:ro -v ./bundles:/pdp/data:ro -e SERVER_ADDRESS=0.0.0.0 ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT
+docker run -p 8443:8443 -v ./config:/pdp/config:ro -v ./bundles:/pdp/data:ro -e SERVER_ADDRESS=0.0.0.0 ghcr.io/heutelbeck/sapl-node:4.1.2
 ```
 
 ### CLI Reference
@@ -335,7 +339,7 @@ All evaluation commands accept `--remote` to connect to a running SAPL Node inst
 | `--host` | `localhost` |
 | `--port` | `7000` |
 
-Use `--insecure` to skip TLS certificate verification during development. Flags take precedence over environment variables. For evaluation command details (`decide`, `decide-once`, `check`), see [Getting Started](../1_2_GettingStarted/). For `test`, see [Testing SAPL Policies](../5_0_TestingSAPLPolicies/).
+Sending credentials over a plaintext connection (an `http://` URL, or RSocket without `--rsocket-tls`) is refused by default. Use `--insecure` to accept that risk during development; it also skips TLS certificate verification. Flags take precedence over environment variables. For evaluation command details (`decide`, `decide-once`, `check`), see [Getting Started](../1_2_GettingStarted/). For `test`, see [Testing SAPL Policies](../5_0_TestingSAPLPolicies/).
 
 #### Bundle and Credential Commands
 

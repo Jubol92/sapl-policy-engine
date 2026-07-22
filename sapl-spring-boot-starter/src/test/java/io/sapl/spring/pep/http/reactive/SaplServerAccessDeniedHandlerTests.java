@@ -83,7 +83,8 @@ class SaplServerAccessDeniedHandlerTests {
         @Test
         @DisplayName("denial handler is a Runner that does not shape the response: falls back to 403")
         void runnerOnlyDoesNotShape() {
-            ConstraintHandler.Runner h        = () -> { /* logs only */ };
+            ConstraintHandler.Runner h        = () -> {
+                                                  /* logs only */ };
             val                      plan     = planFor(denyWith("audit"),
                     provider(constraint -> ConstraintHandlerProvider.constraintIsOfType(constraint, "audit")
                             ? List.of(new ScopedConstraintHandler(h, Signal.HttpDenialSignal.SIGNAL_TYPE, 0))
@@ -130,6 +131,23 @@ class SaplServerAccessDeniedHandlerTests {
             assertThat(exchange.getResponse()).satisfies(r -> {
                 assertThat(r.getStatusCode().value()).isEqualTo(451);
                 assertThat(r.getHeaders().getContentType().toString()).startsWith("text/plain");
+                assertThat(r.getBodyAsString().block()).isEqualTo("denied by policy");
+            });
+        }
+
+        @Test
+        @DisplayName("handler that shapes only the body without a status still commits 403")
+        void bodyOnlyObligationCommitsForbidden() {
+            ConstraintHandler.Consumer<MutableHttpResponse> h        = resp -> resp
+                    .writeBody("text/plain;charset=UTF-8", "denied by policy");
+            val                                             plan     = planFor(denyWith("bodyonly"),
+                    provider(constraint -> ConstraintHandlerProvider.constraintIsOfType(constraint, "bodyonly")
+                            ? List.of(new ScopedConstraintHandler(h, Signal.HttpDenialSignal.SIGNAL_TYPE, 0))
+                            : List.of()));
+            val                                             exchange = withPlan(plan);
+            StepVerifier.create(handler.handle(exchange, DENIED)).verifyComplete();
+            assertThat(exchange.getResponse()).satisfies(r -> {
+                assertThat(r.getStatusCode().value()).isEqualTo(403);
                 assertThat(r.getBodyAsString().block()).isEqualTo("denied by policy");
             });
         }

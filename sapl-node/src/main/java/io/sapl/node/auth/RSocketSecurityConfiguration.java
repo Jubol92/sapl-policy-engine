@@ -24,13 +24,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 
 import org.springframework.security.oauth2.jwt.Jwt;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.rsocket.ConnectionSetupPayload;
 import io.rsocket.metadata.AuthMetadataCodec;
 import io.sapl.node.SaplNodeProperties;
 import io.sapl.node.auth.UserLookupService;
@@ -69,42 +69,48 @@ public class RSocketSecurityConfiguration {
     private static final String ERROR_INVALID_BEARER    = "Invalid bearer token.";
     private static final String ERROR_MISSING_PDP_CLAIM = "JWT missing required claim: %s.";
     private static final String ERROR_NO_CREDENTIALS    = "No authentication credentials in setup frame.";
-    private static final String ERROR_UNKNOWN_USER      = "Unknown user: %s.";
+
+    private static final String WARN_JWT_NO_EXPIRY_ACCEPTED = "Accepting a JWT without an 'exp' claim because io.sapl.node.oauth.allow-jwt-without-expiry=true. This grants a non-expiring connection to the PDP.";
+    private static final String WARN_JWT_NO_EXPIRY_REJECTED = "Rejected a JWT without an 'exp' claim. It would grant a non-expiring connection; set io.sapl.node.oauth.allow-jwt-without-expiry=true to accept (insecure).";
 
     private final SaplNodeProperties   properties;
     private final UserLookupService    userLookupService;
-    private final PasswordEncoder      passwordEncoder;
     private final @Nullable JwtDecoder jwtDecoder;
 
     @Bean
     @Nullable
     RSocketConnectionAuthenticator rsocketConnectionAuthenticator(
-            @Value("${sapl.pdp.rsocket.enabled:false}") boolean rsocketEnabled) {
+            @Value("${sapl.pdp.rsocket.enabled:true}") boolean rsocketEnabled) {
         if (!rsocketEnabled) {
             return null;
         }
-        if (properties.isAllowNoAuth()) {
+        val allowNoAuth = properties.isAllowNoAuth();
+        if (allowNoAuth) {
             log.warn("RSocket endpoint accepts unauthenticated connections");
-            return setup -> Mono.just(new AuthenticationResult(properties.getDefaultPdpId(), null));
         }
-        return setup -> Mono.defer(() -> {
-            val metadata = setup.metadata();
-            if (metadata.readableBytes() == 0) {
-                return Mono.error(new BadCredentialsException(ERROR_NO_CREDENTIALS));
-            }
-            val metadataBuf = Unpooled.wrappedBuffer(metadata.nioBuffer());
-            try {
-                val authType = AuthMetadataCodec.readWellKnownAuthType(metadataBuf);
-                return switch (authType) {
-                case SIMPLE -> authenticateBasic(metadataBuf);
-                case BEARER -> authenticateBearer(metadataBuf);
-                default     -> Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED));
-                };
-            } catch (Exception e) {
-                log.debug("RSocket setup auth failed: {}", e.getMessage());
-                return Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED, e));
-            }
-        });
+        return setup -> Mono.defer(() -> authenticateSetup(setup, allowNoAuth));
+    }
+
+    private Mono<AuthenticationResult> authenticateSetup(ConnectionSetupPayload setup, boolean allowNoAuth) {
+        val metadata = setup.metadata();
+        if (metadata.readableBytes() == 0) {
+            // No credentials maps to the default PDP only when anonymous access is allowed.
+            return allowNoAuth ? Mono.just(new AuthenticationResult(properties.getDefaultPdpId(), null))
+                    : Mono.error(new BadCredentialsException(ERROR_NO_CREDENTIALS));
+        }
+        val metadataBuf = Unpooled.wrappedBuffer(metadata.nioBuffer());
+        try {
+            val authType = AuthMetadataCodec.readWellKnownAuthType(metadataBuf);
+            return switch (authType) {
+            case SIMPLE -> properties.isAllowBasicAuth() ? authenticateBasic(metadataBuf)
+                    : Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED));
+            case BEARER -> authenticateBearer(metadataBuf);
+            default     -> Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED));
+            };
+        } catch (Exception e) {
+            log.debug("RSocket setup auth failed: {}", e.getMessage());
+            return Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED, e));
+        }
     }
 
     private Mono<AuthenticationResult> authenticateBasic(ByteBuf metadata) {
@@ -112,15 +118,13 @@ public class RSocketSecurityConfiguration {
         val passwordBuf = AuthMetadataCodec.readPassword(metadata);
         val username    = usernameBuf.toString(StandardCharsets.UTF_8);
         val password    = passwordBuf.toString(StandardCharsets.UTF_8);
-        val userOpt     = userLookupService.findByBasicUsername(username);
+        // Constant-time verification, so timing does not disclose whether a username
+        // exists.
+        val userOpt = userLookupService.verifyBasicCredentials(username, password);
         if (userOpt.isEmpty()) {
-            return Mono.error(new BadCredentialsException(ERROR_UNKNOWN_USER.formatted(username)));
-        }
-        val user = userOpt.get();
-        if (!passwordEncoder.matches(password, user.getBasic().getSecret())) {
             return Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED));
         }
-        return Mono.just(new AuthenticationResult(user.getPdpId(), null));
+        return Mono.just(new AuthenticationResult(userOpt.get().getPdpId(), null));
     }
 
     private Mono<AuthenticationResult> authenticateBearer(ByteBuf metadata) {
@@ -130,6 +134,9 @@ public class RSocketSecurityConfiguration {
         // Route by prefix: sapl_ marks API keys, JWTs lack it. Prevents
         // a JWT signature failure from silently retrying as an API key.
         if (token.startsWith(SAPL_API_KEY_PREFIX)) {
+            if (!properties.isAllowApiKeyAuth()) {
+                return Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED));
+            }
             return authenticateApiKey(token);
         }
         if (jwtDecoder != null && properties.isAllowOauth2Auth()) {
@@ -139,6 +146,14 @@ public class RSocketSecurityConfiguration {
     }
 
     private Mono<AuthenticationResult> extractPdpIdFromJwt(Jwt jwt) {
+        val expiresAt = jwt.getExpiresAt();
+        if (expiresAt == null) {
+            if (!properties.getOauth().isAllowJwtWithoutExpiry()) {
+                log.warn(WARN_JWT_NO_EXPIRY_REJECTED);
+                return Mono.error(new BadCredentialsException(ERROR_AUTH_FAILED));
+            }
+            log.warn(WARN_JWT_NO_EXPIRY_ACCEPTED);
+        }
         val pdpIdClaim = properties.getOauth().getPdpIdClaim();
         val pdpIdValue = jwt.getClaimAsString(pdpIdClaim);
 
@@ -147,11 +162,11 @@ public class RSocketSecurityConfiguration {
                 return Mono.error(new BadCredentialsException(ERROR_MISSING_PDP_CLAIM.formatted(pdpIdClaim)));
             }
             log.debug("RSocket JWT auth: no {} claim, using default pdpId", pdpIdClaim);
-            return Mono.just(new AuthenticationResult(properties.getDefaultPdpId(), jwt.getExpiresAt()));
+            return Mono.just(new AuthenticationResult(properties.getDefaultPdpId(), expiresAt));
         }
 
-        log.debug("RSocket JWT auth: pdpId={}, expires={}", pdpIdValue, jwt.getExpiresAt());
-        return Mono.just(new AuthenticationResult(pdpIdValue, jwt.getExpiresAt()));
+        log.debug("RSocket JWT auth: pdpId={}, expires={}", pdpIdValue, expiresAt);
+        return Mono.just(new AuthenticationResult(pdpIdValue, expiresAt));
     }
 
     private Mono<AuthenticationResult> authenticateApiKey(String token) {

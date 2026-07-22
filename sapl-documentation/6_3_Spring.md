@@ -15,7 +15,7 @@ The flow is straightforward. Your application sends an authorization subscriptio
 
 This walkthrough shows how the pieces fit together end to end.
 
-**1. Add the BOM and snapshot repository to your `pom.xml`.**
+**1. Add the SAPL BOM to your `pom.xml`.**
 
 ```xml
 <dependencyManagement>
@@ -23,21 +23,15 @@ This walkthrough shows how the pieces fit together end to end.
         <dependency>
             <groupId>io.sapl</groupId>
             <artifactId>sapl-bom</artifactId>
-            <version>4.1.0-SNAPSHOT</version>
+            <version>4.1.2</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
     </dependencies>
 </dependencyManagement>
-
-<repositories>
-    <repository>
-        <id>central-portal-snapshots</id>
-        <url>https://central.sonatype.com/repository/maven-snapshots/</url>
-        <snapshots><enabled>true</enabled></snapshots>
-    </repository>
-</repositories>
 ```
+
+Released SAPL artifacts are available from Maven Central. If you intentionally test unreleased SAPL builds, use the matching `-SNAPSHOT` version and add the Central Portal snapshots repository.
 
 **2. Add the starter dependency.**
 
@@ -72,11 +66,17 @@ public class SecurityConfig {
 **5. Annotate a method.**
 
 ```java
-@PreEnforce(subject = "authentication.name", action = "'read'", resource = "#id")
+@PreEnforce(
+    subject = "authentication.name",
+    action = "'read'",
+    resource = "{ 'id': #id, 'ownerId': @bookOwnershipService.ownerOf(#id) }"
+)
 public Book findById(Long id) {
     return bookRepository.findById(id);
 }
 ```
+
+The `@bookOwnershipService` expression calls a Spring bean before the repository method runs. The policy can then compare the authenticated user with the owner of the requested book.
 
 **6. Write a policy** in `src/main/resources/policies/books.sapl`.
 
@@ -139,7 +139,7 @@ public class SecurityConfig {
 }
 ```
 
-The same `@PreEnforce` and `@PostEnforce` annotations work here. They integrate with the reactive pipeline instead of blocking. One restriction is worth knowing about. `@PostEnforce` on reactive methods only works with `Mono`, not `Flux`. The resource value must be a single object, not a stream. If you need to enforce on a `Flux` return type, apply the policy at a different layer such as filtering inside the publisher, or use `@PreEnforce` together with query-manipulation obligations.
+The same `@PreEnforce` and `@PostEnforce` annotations work here. They integrate with the reactive pipeline instead of blocking. One restriction is worth knowing about. `@PostEnforce` on reactive methods only works with `Mono`, not `Flux`. The resource value must be a single object, not a stream. If you need to enforce on a `Flux` return type, apply the policy at a different layer such as filtering inside the publisher, or use `@PreEnforce` together with query-rewriting obligations.
 
 ### How Enforcement Works
 
@@ -147,7 +147,7 @@ The annotations are convenient. To use them well, it helps to understand what ha
 
 #### The Deny Invariant
 
-One rule governs all enforcement. Only `PERMIT` grants access. The PDP can return five possible decisions (`PERMIT`, `DENY`, `SUSPEND`, `INDETERMINATE`, `NOT_APPLICABLE`). Only `PERMIT` ever results in access being granted; everything else means denial. Streaming PEPs that honour `SUSPEND` pause the data flow without terminating the subscription, so a later `PERMIT` resumes it; one-shot PEPs treat `SUSPEND` as `DENY`. See [Authorization Decisions](../2_3_AuthorizationDecisions/) for the per-decision PEP semantics.
+One rule governs all enforcement. Only `PERMIT` grants access. The PDP can return five possible decisions (`PERMIT`, `DENY`, `SUSPEND`, `INDETERMINATE`, `NOT_APPLICABLE`). Only `PERMIT` ever results in access being granted. Everything else means denial. Streaming PEPs that honour `SUSPEND` pause the data flow without terminating the subscription, so a later `PERMIT` resumes it. One-shot PEPs treat `SUSPEND` as `DENY`. See [Authorization Decisions](../2_3_AuthorizationDecisions/) for the per-decision PEP semantics.
 
 A decision from the PDP looks like this.
 
@@ -211,7 +211,7 @@ If the decision is `PERMIT`, constraint handlers proceed through the same stages
 
 There is one subtlety worth keeping in mind. Because the method runs before the PDP is consulted, if the method itself throws an exception, that exception propagates directly. The PDP is never called. There is no return value to include in the subscription, and no point in authorizing a failed operation.
 
-For the formal specification of these enforcement modes, including state machines, teardown invariants, and edge cases around handler resolution timing, see the [PEP Implementation Specification](../8_1_PEPImplementationSpecification/).
+SAPL PEP libraries share a single unified enforcement model. It is a strict fail-closed state machine over the five decision verbs, where only `PERMIT` grants access and only an explicit `SUSPEND` pauses a stream without terminating it. See [Authorization Decisions](../2_3_AuthorizationDecisions/) for the decision-verb semantics.
 
 ### Building the Authorization Subscription
 
@@ -293,31 +293,30 @@ Every decision the PDP emits during the lifetime of the subscription has one of 
 |---|---|
 | `PERMIT` | Items from the protected method flow through to the subscriber. |
 | `SUSPEND` | Items are silently dropped. The subscription stays open. A later `PERMIT` resumes the flow. |
-| `INDETERMINATE` | Same as `SUSPEND`. Streaming subscriptions are kept open across transient PDP errors. |
-| `NOT_APPLICABLE` | Same as `SUSPEND`. Streaming subscriptions are kept open across transient policy gaps. |
+| `INDETERMINATE` | The subscription terminates with an `AccessDeniedException`. |
+| `NOT_APPLICABLE` | The subscription terminates with an `AccessDeniedException`. |
 | `DENY` | The subscription terminates with an `AccessDeniedException`. |
 
-The mapping of `INDETERMINATE` and `NOT_APPLICABLE` to silent-drop is deliberate: streaming subscriptions should be resilient to transient policy gaps and broker errors. Operators who want hard fail-closed semantics on these set the combining algorithm's `defaultDecision` to `DENY` (so `NOT_APPLICABLE` collapses to `DENY`) or its `errorHandling` to `PROPAGATE` (so `INDETERMINATE` collapses to `DENY`) at the PDP level. The streaming PEP honours whatever decision the PDP produces.
+Under the strict fail-closed discipline, `INDETERMINATE`, `NOT_APPLICABLE`, and a `PERMIT` whose decision-scoped enforcement fails all terminate the subscription with an `AccessDeniedException`. Only an explicit `SUSPEND` from the PDP silences (rather than terminates) the subscription. Operators who want `NOT_APPLICABLE` to silence rather than terminate set the combining algorithm's `defaultDecision` to `SUSPEND` at the PDP level, producing a real `SUSPEND` decision the streaming PEP then routes through suspension.
 
 A subscription that has been silenced by a `SUSPEND` resumes the moment the PDP emits a `PERMIT` again. This is the use case the `suspend` verb in policies was designed for. See [Authorization Decisions](../2_3_AuthorizationDecisions/) for the policy-side semantics.
 
-#### Three Flags
+Per-item obligation failure also terminates the subscription, with an `AccessDeniedException` carrying a message indicating the per-item discharge failure. The strict fail-closed default removes the prior `terminateOnItemEnforcementFailure` annotation flag: per-item failure is now unconditionally terminal, matching strict `@PreEnforce` semantics on a per-item timeline.
 
-`@StreamEnforce` carries three boolean flags, all defaulting to `false`. Each addresses one orthogonal concern.
+#### Two Flags
+
+`@StreamEnforce` carries two boolean flags, both defaulting to `false`. Each addresses one orthogonal concern.
 
 ```java
 @StreamEnforce(
-    signalTransitions                 = boolean,  // default false
-    terminateOnItemEnforcementFailure = boolean,  // default false
-    pauseRapDuringSuspend             = boolean   // default false
+    signalTransitions     = boolean,  // default false
+    pauseRapDuringSuspend = boolean   // default false
 )
 ```
 
 **`signalTransitions`**. Surfaces every suspend/resume boundary to the subscriber as a non-terminal exception on the error channel. When `false` (the default), boundary transitions are silent: the subscriber sees items while permitted and silence while suspended, with no programmatic notification of the transition itself. When `true`, the subscriber receives an `AccessDeniedException` (with the suspend reason) every time the subscription is silenced, and an `AccessGrantedException` every time it resumes. Both directions are gated symmetrically by the same flag. Terminal denies bypass the gate entirely and surface as a normal Reactor terminal error regardless. Subscribers that want to render UI state changes per transition (e.g. "stream paused, waiting for access") opt in to `signalTransitions=true`.
 
-**`terminateOnItemEnforcementFailure`**. Controls what happens when a per-item obligation handler fails. With the default `false`, an item-level failure silences the subscription as if the PDP had emitted `SUSPEND`; the subscription stays alive and may resume on a later decision. With `true`, an item-level failure terminates the subscription with an `AccessDeniedException`. Choose `true` for protected methods whose per-item side effects are unsafe to leave unenforced (where letting one item slip past would be a security failure). Choose `false` (the default) for streams where transient enforcement hiccups should pause the subscription without tearing it down.
-
-**`pauseRapDuringSuspend`**. Controls the underlying connection while the subscription is silenced. With the default `false`, the protected method's `Flux` stays subscribed throughout the silenced period; items keep arriving from upstream and are silently dropped on the way to the subscriber. Lower latency on resume; preserves whatever state upstream holds (subscription IDs, message offsets, etc.). With `true`, the upstream subscription is disposed when the subscription is silenced and re-established when the subscription resumes. Stops upstream side effects during suspension at the cost of paying re-subscription latency on resume. Opt in for upstream sources with expensive side effects that must not run when the subscriber is denied access.
+**`pauseRapDuringSuspend`**. Controls the underlying connection while the subscription is silenced. With the default `false`, the protected method's `Flux` stays subscribed throughout the silenced period. Items keep arriving from upstream and are silently dropped on the way to the subscriber. Lower latency on resume. Preserves whatever state upstream holds (subscription IDs, message offsets, etc.). With `true`, the upstream subscription is disposed when the subscription is silenced and re-established when the subscription resumes. Stops upstream side effects during suspension at the cost of paying re-subscription latency on resume. Opt in for upstream sources with expensive side effects that must not run when the subscriber is denied access.
 
 #### Backpressure Transparency
 
@@ -343,7 +342,7 @@ Defaults are sufficient. A `DENY` from the PDP terminates the subscription with 
 public Flux<TelemetryEvent> telemetry() { ... }
 ```
 
-Same defaults; the difference is in the policy: use the `suspend` verb instead of `deny` for the deny windows. The PDP returns `SUSPEND`, items are silently dropped, the subscription stays open. When the policy returns `PERMIT` again, items resume. Useful for legacy clients that cannot renegotiate connections, or when revealing the deny condition itself would leak information.
+Same defaults. The difference is in the policy, use the `suspend` verb instead of `deny` for the deny windows. The PDP returns `SUSPEND`, items are silently dropped, the subscription stays open. When the policy returns `PERMIT` again, items resume. Useful for legacy clients that cannot renegotiate connections, or when revealing the deny condition itself would leak information.
 
 **Survive deny with explicit transition signals.** The subscription should survive, and the subscriber wants to know about every boundary.
 
@@ -352,9 +351,9 @@ Same defaults; the difference is in the policy: use the `suspend` verb instead o
 public Flux<MarketData> marketData() { ... }
 ```
 
-The PDP returns `SUSPEND` for windows where access should pause; the PEP emits a non-terminal `AccessDeniedException` every time the subscription is silenced and an `AccessGrantedException` every time it resumes. The subscriber observes these on the error channel and can update UI state, log the boundary, or trigger client-side replay logic. The subscription itself stays open across all transitions until either the client cancels or the PDP issues a terminal `DENY`.
+The PDP returns `SUSPEND` for windows where access should pause. The PEP emits a non-terminal `AccessDeniedException` every time the subscription is silenced and an `AccessGrantedException` every time it resumes. The subscriber observes these on the error channel and can update UI state, log the boundary, or trigger client-side replay logic. The subscription itself stays open across all transitions until either the client cancels or the PDP issues a terminal `DENY`.
 
-For the third pattern, a helper class `TransitionSignals` ships with the PEP for translating those non-terminal exceptions into application-level callbacks; see [Streaming Constraint Handlers](#streaming-constraint-handlers) below.
+For the third pattern, a helper class `TransitionSignals` ships with the PEP for translating those non-terminal exceptions into application-level callbacks. See [Streaming Constraint Handlers](#streaming-constraint-handlers) below.
 
 #### Subscription, Action, and Resource
 
@@ -373,7 +372,7 @@ When omitted, defaults are derived from the method invocation as for the request
 
 #### Streaming Constraint Handlers
 
-The same `ConstraintHandlerProvider` mechanism that powers `@PreEnforce` and `@PostEnforce` applies. Per-item handlers attach to the `OutputSignal` and run on every emitted item; decision-scoped handlers attach to the `DecisionSignal` and run once per decision arrival. See [Constraints](#constraints) below.
+The same `ConstraintHandlerProvider` mechanism that powers `@PreEnforce` and `@PostEnforce` applies. Per-item handlers attach to the `OutputSignal` and run on every emitted item. Decision-scoped handlers attach to the `DecisionSignal` and run once per decision arrival. See [Constraints](#constraints) below.
 
 For the recoverable pattern, the helper:
 
@@ -583,7 +582,7 @@ A typical request behind a TLS-terminating reverse proxy serialises to:
 #### Forwarded chain
 
 When standard reverse-proxy forwarding headers are present, a parsed
-view sits at `forwarded`. RFC 7239 `Forwarded` is preferred; the legacy
+view sits at `forwarded`. RFC 7239 `Forwarded` is preferred. The legacy
 `X-Forwarded-{For,Host,Proto,Port}` family is the fallback. The
 `forwarded` block is omitted entirely when no relevant header is
 present.
@@ -596,7 +595,7 @@ present.
 | `forwarded.port` | The explicit forwarded port, when signalled. |
 
 The serializer parses these headers but does not judge whether to
-trust them. Whether to honour the chain is a policy decision; typical
+trust them. Whether to honour the chain is a policy decision. Typical
 patterns gate on `client.address` being in a trusted proxy range.
 For SAPL to receive Spring's own rewritten request URI/host/scheme
 (based on these headers), wire `ForwardedHeaderTransformer` (reactive)
@@ -693,7 +692,7 @@ The authorization manager stores the active `EnforcementPlan` on a request or ex
 
 ### MutableHttpRequest and MutableHttpResponse
 
-`MutableHttpRequest` and `MutableHttpResponse` are SAPL abstractions over the underlying request and response on either backend. Handlers see this interface and write portable code. Servlet implementations live under `io.sapl.spring.pep.http.servlet`, reactive implementations under `io.sapl.spring.pep.http.reactive`; cast to a backend type only when a feature outside the interface is required.
+`MutableHttpRequest` and `MutableHttpResponse` are SAPL abstractions over the underlying request and response on either backend. Handlers see this interface and write portable code. Servlet implementations live under `io.sapl.spring.pep.http.servlet`, reactive implementations under `io.sapl.spring.pep.http.reactive`. Cast to a backend type only when a feature outside the interface is required.
 
 ```java
 public interface MutableHttpRequest {
@@ -728,7 +727,7 @@ public interface MutableHttpResponse {
 
 The HTTP PEP filter wraps the request and response only when it has work to do. It checks the active plan for handlers scheduled at `HttpRequestMutationSignal` and `HttpResponseSignal` before installing either wrapper. The common case (a permit decision with no HTTP signal handlers) runs against the raw request and response with no extra copy.
 
-When response-side handlers are scheduled, the filter installs a buffering wrapper that captures every controller byte in memory and re-emits it on commit. This makes body inspection and rewrite possible but is unsuitable for unbounded streaming bodies. Constraint handler authors who need response shaping should be aware of the in-memory capture; routes that intentionally stream large payloads should not register response-signal handlers.
+When response-side handlers are scheduled, the filter installs a buffering wrapper that captures every controller byte in memory and re-emits it on commit. This makes body inspection and rewrite possible but is unsuitable for unbounded streaming bodies. Constraint handler authors who need response shaping should be aware of the in-memory capture. Routes that intentionally stream large payloads should not register response-signal handlers.
 
 When request-side handlers are scheduled, the filter installs a header-override wrapper, fires the mutation signal, and only forwards the wrapper to the chain when at least one handler actually called a setter. Pure observation handlers cost nothing beyond the signal dispatch.
 
@@ -746,7 +745,7 @@ public class TenantHeaderHandler implements ConstraintHandlerProvider {
     public List<ScopedConstraintHandler> getConstraintHandlers(
             Value constraint, Set<SignalType> supportedSignals) {
 
-        if (!ConstraintResponsibility.isResponsible(constraint, "tenant-header")) {
+        if (!ConstraintHandlerProvider.constraintIsOfType(constraint, "tenant-header")) {
             return List.of();
         }
         if (!supportedSignals.contains(Signal.HttpRequestMutationSignal.SIGNAL_TYPE)) {
@@ -854,9 +853,9 @@ obligation {
 
 This example uses SAPL's built-in `timeBetween` and `dateOf` functions to calculate the user's age and filter out books with age ratings above that age. The schema accepts only `conditions`, with the same shape as in `filterJsonContent`. Elements that do not match all conditions are dropped from the collection.
 
-#### Query Manipulation
+#### Query Rewriting
 
-`SqlQueryManipulationProvider` and `MongoDbQueryManipulationProvider` rewrite database queries to filter at the data layer. They are covered in detail in the [Query Manipulation](#query-manipulation) section below.
+`SqlQueryRewritingProvider` and `MongoDbQueryRewritingProvider` rewrite database queries to filter at the data layer. See [Query Rewriting](../6_12_QueryRewriting/) for details.
 
 ### Writing Custom Handlers
 
@@ -904,7 +903,7 @@ public class LogAccessHandler implements ConstraintHandlerProvider {
     public List<ScopedConstraintHandler> getConstraintHandlers(
             Value constraint, Set<SignalType> supportedSignals) {
 
-        if (!ConstraintResponsibility.isResponsible(constraint, CONSTRAINT_TYPE)) {
+        if (!ConstraintHandlerProvider.constraintIsOfType(constraint, CONSTRAINT_TYPE)) {
             return List.of();
         }
 
@@ -926,175 +925,21 @@ public class LogAccessHandler implements ConstraintHandlerProvider {
 
 Two things are worth pointing out.
 
-First, the responsibility check uses the helper `ConstraintResponsibility.isResponsible(constraint, type)`, which checks whether the constraint is a JSON object with a `type` field matching the given string. This is the convention used by all built-in providers. You are free to use a different convention if it makes more sense for your obligations.
+First, the responsibility check uses the static helper `ConstraintHandlerProvider.constraintIsOfType(constraint, type)`, which checks whether the constraint is a JSON object with a `type` field matching the given string. This is the convention used by all built-in providers. You are free to use a different convention if it makes more sense for your obligations.
 
 Second, the handler attaches to `DecisionSignal.SIGNAL_TYPE`. The PEP fires `DecisionSignal` once when the decision arrives, before the method runs. If you want to log on completion instead, attach to `CompleteSignal.SIGNAL_TYPE`. If you want to inspect the return value, attach to `OutputSignal.typeFor(SomeReturnType.class)` and use a `Consumer<SomeReturnType>` handler.
 
 Spring auto-discovers any bean implementing `ConstraintHandlerProvider`. Just annotate with `@Component` and put it in a scanned package.
 
-## Query Manipulation
+## Query Rewriting
 
-Spring Data applications often want to filter results at the database, not in memory. SAPL supports this with two backends today, R2DBC and reactive MongoDB. The mechanism is a transparent shim. You do not annotate repository methods. You apply `@PreEnforce` on the calling service method as usual, and the policy emits a query manipulation obligation. The shim catches the query as Spring Data dispatches it, applies the obligation, and sends the rewritten query to the driver.
+Spring Data applications can filter results at the database with no changes to your repositories: apply `@PreEnforce` to the calling service method, and the policy attaches a `sql:queryRewriting` or `mongo:queryRewriting` obligation that the SAPL integration applies before the query reaches the driver. The SAPL Spring Boot starter wires this automatically for R2DBC repositories and reactive MongoDB.
 
-### How the Shim Works
-
-When the SAPL Spring Boot starter sees `R2dbcRepository` or `ReactiveMongoTemplate` on the classpath, it activates an auto-configuration that wraps two beans.
-
-- `DatabaseClient` for R2DBC. Every R2DBC dispatch path bottoms out at `DatabaseClient.sql(...)`. The shim wraps that call.
-- `ReactiveMongoTemplate` for MongoDB. The shim intercepts both the legacy entry points (`find`, `findOne`, `exists`, `count`, `remove`) and the fluent `query(Class).matching(Query)` chain that derived queries use internally.
-
-When a service method annotated with `@PreEnforce` triggers a decision carrying a query manipulation obligation, the obligation is bound to the active enforcement plan. Calls that flow through your repository while that plan is active reach the shim, fire a shim signal, apply the rewritten query, and forward to the driver.
-
-When no plan is active (for example, when the same repository is called from a controller without `@PreEnforce`), the shim passes the query through unchanged. There is no global filter. The obligation only applies inside the protected service call.
-
-The obligation can never widen the user's filter. It can only narrow it. If the user requested rows where `category = 'art'` and the obligation says `tenant_id = 7`, the resulting query asks for rows where both conditions hold.
-
-### SQL: `sql:queryManipulation`
-
-For R2DBC and other SQL backends, the constraint type is `sql:queryManipulation` (the alias `relational:queryManipulation` is accepted as a synonym). The provider supports a typed criteria language for portable obligations and a string escape hatch for backend-specific SQL.
-
-A simple obligation that adds a tenant filter and projects only some columns.
-
-```
-obligation {
-             "type": "sql:queryManipulation",
-             "criteria": [
-               { "column": "tenant_id", "op": "=", "value": 7 }
-             ],
-             "columns": [ "id", "title", "author" ]
-           }
-```
-
-The full schema.
-
-```jsonc
-{
-  "type":       "sql:queryManipulation",
-  "criteria":   [],   // typed criteria, AND-joined at top level
-  "conditions": [],   // raw SQL fragments, AND-joined
-  "columns":    []    // SELECT projection narrowing
-}
-```
-
-A typed criterion is a JSON object with `column`, `op`, and `value`.
-
-```json
-{ "column": "status", "op": "=", "value": "active" }
-```
-
-The supported operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `in` (with an array `value`), `like`, `notLike`, `isNull`, and `isNotNull`. The `isNull` and `isNotNull` operators do not need a `value`.
-
-You can group criteria with `or` and `and`, and groups can be nested.
-
-```json
-[
-  { "column": "tenant_id", "op": "=", "value": 7 },
-  { "or": [
-    { "column": "owner_id",  "op": "=", "value": "alice" },
-    { "column": "is_public", "op": "=", "value": true }
-  ]}
-]
-```
-
-Each top-level entry in the `criteria` array is AND-joined with the others.
-
-The `conditions` array carries raw SQL fragments. Use this for SQL features the typed language does not cover, such as `BETWEEN`, `EXISTS`, or vendor functions.
-
-```json
-{ "conditions": [ "created_at > CURRENT_TIMESTAMP - INTERVAL '7 days'" ] }
-```
-
-The `columns` array narrows the SELECT projection. If the original query is `SELECT *`, the obligation columns become the projection. If the original query already projects specific columns, the obligation columns intersect with them. The `columns` array applies only to SELECT statements. For UPDATE and DELETE it is ignored.
-
-### MongoDB: `mongo:queryManipulation`
-
-For reactive MongoDB, the constraint type is `mongo:queryManipulation`.
-
-```
-obligation {
-             "type": "mongo:queryManipulation",
-             "criteria": [
-               { "column": "tenantId", "op": "=", "value": 7 }
-             ]
-           }
-```
-
-The schema mirrors the SQL provider, minus the `columns` projection feature.
-
-```jsonc
-{
-  "type":       "mongo:queryManipulation",
-  "criteria":   [],   // typed criteria, AND-joined at top level
-  "conditions": []    // raw BSON fragments, AND-joined
-}
-```
-
-The typed criteria language accepts the same operators as SQL except `like` and `notLike`. For pattern matching use the `conditions` escape hatch with `$regex`.
-
-```json
-{ "conditions": [ "{ 'name': { '$regex': '^A' } }" ] }
-```
-
-Conditions use the standard MongoDB BSON query syntax. The provider parses each fragment and intersects it with the user's query inside a top-level `$and` array. The original query is preserved. The obligation can never overwrite a field the user is already filtering on.
-
-### Worked Example
-
-A service method that lists books for the current user.
-
-```java
-@Service
-public class LibraryService {
-
-    private final BookRepository books;
-
-    LibraryService(BookRepository books) {
-        this.books = books;
-    }
-
-    @PreEnforce(subject = "authentication.name", action = "'list-books'")
-    public Flux<Book> listBooks() {
-        return books.findAll();
-    }
-}
-```
-
-A policy that restricts each user to books belonging to their tenant.
-
-```
-policy "books are tenant-scoped"
-permit
-  action == "list-books";
-obligation {
-             "type": "sql:queryManipulation",
-             "criteria": [
-               { "column": "tenant_id", "op": "=", "value": subject.tenantId }
-             ]
-           }
-```
-
-When a user from tenant 7 calls `listBooks()`, the SQL the database executes carries an additional `WHERE tenant_id = 7`. The user only ever sees their own tenant's books. No code in `LibraryService` or `BookRepository` had to change.
-
-The same pattern works for derived queries (`findByAuthor`, `findByPriceLessThan`), `@Query`-annotated methods, and direct calls to `databaseClient.sql(...)`. Every R2DBC dispatch path eventually reaches the shim.
-
-### Disabling the Shim per Engine
-
-You may want to keep the SAPL starter in your application without letting it wrap your data access beans. Common cases include integration tests against a fixture database, a phased rollout where you have not yet authored query manipulation policies, or wanting to enforce only at the method-call boundary.
-
-Each shim has its own opt-out property, both default `true`.
-
-```properties
-# Disable the R2DBC shim
-io.sapl.method-security.r2dbc-shim.enabled=false
-
-# Disable the Mongo shim
-io.sapl.method-security.mongo-shim.enabled=false
-```
-
-Setting either to `false` removes that engine's auto-configuration. The corresponding `BeanPostProcessor` does not register, your `DatabaseClient` and `ReactiveMongoTemplate` beans are not wrapped, and any `sql:queryManipulation` or `mongo:queryManipulation` obligation on a decision becomes an unhandled obligation, which the PEP treats as a denial. Keep this in mind when you disable a shim. If your policies still emit the obligation type, requests will start failing closed.
+See [Query Rewriting](../6_12_QueryRewriting/) for the obligation format, the shared semantics, worked examples, and the per-backend opt-out properties.
 
 ## Configuration
 
-SAPL Spring Security is configured through `application.properties` or `application.yml`. The properties control which PDP to use and how it behaves, plus a few cross-cutting toggles for method security, JWT injection, and query manipulation.
+SAPL Spring Security is configured through `application.properties` or `application.yml`. The properties control which PDP to use and how it behaves, plus a few cross-cutting toggles for method security, JWT injection, and query rewriting.
 
 ### Embedded PDP
 
@@ -1160,10 +1005,11 @@ When `pdp-config-type=REMOTE_BUNDLES`, bundles are fetched from a remote HTTP se
 | `io.sapl.pdp.embedded.remote-bundles.base-url` | none | Base URL of the bundle server. Bundles are fetched as `{base-url}/{pdpId}`. |
 | `io.sapl.pdp.embedded.remote-bundles.pdp-ids` | empty | List of PDP identifiers to fetch bundles for. |
 | `io.sapl.pdp.embedded.remote-bundles.mode` | `POLLING` | `POLLING` for interval-based or `LONG_POLL` for long-poll change detection. |
-| `io.sapl.pdp.embedded.remote-bundles.poll-interval` | `30s` | Default polling interval. |
+| `io.sapl.pdp.embedded.remote-bundles.poll-interval` | `5s` | Default polling interval. |
 | `io.sapl.pdp.embedded.remote-bundles.long-poll-timeout` | `30s` | Server hold timeout for long-poll mode. |
 | `io.sapl.pdp.embedded.remote-bundles.auth-header-name` | none | HTTP header name for authentication (such as `Authorization`). |
 | `io.sapl.pdp.embedded.remote-bundles.auth-header-value` | none | HTTP header value for authentication (such as `Bearer <token>`). |
+| `io.sapl.pdp.embedded.remote-bundles.allow-insecure-http` | `false` | Permit configured auth headers over plaintext HTTP. Use only on trusted local or proxied hops. |
 | `io.sapl.pdp.embedded.remote-bundles.follow-redirects` | `true` | Follow HTTP 3xx redirects. |
 | `io.sapl.pdp.embedded.remote-bundles.pdp-id-poll-intervals.<id>` | empty | Per-`pdpId` poll interval overrides. |
 | `io.sapl.pdp.embedded.remote-bundles.first-backoff` | `500ms` | Initial backoff after a fetch failure. |
@@ -1240,7 +1086,7 @@ spring.security.oauth2.client:
     issuer-uri: https://idp.example.org/realms/sapl
 ```
 
-The token is cached and refreshed by Spring's `OAuth2AuthorizedClientManager`. On the RSocket transport, each (re)connect mints a fresh BEARER setup-frame metadata payload from the current token; when the SAPL Node disposes the connection on JWT `exp`, the client reconnects with a freshly issued token. End-to-end this is transparent to the consumer's controllers.
+The token is cached and refreshed by Spring's `OAuth2AuthorizedClientManager`. On the RSocket transport, each (re)connect mints a fresh BEARER setup-frame metadata payload from the current token. When the SAPL Node disposes the connection on JWT `exp`, the client reconnects with a freshly issued token. End-to-end this is transparent to the consumer's controllers.
 
 #### Property reference
 
@@ -1262,15 +1108,23 @@ The token is cached and refreshed by Spring's `OAuth2AuthorizedClientManager`. O
 | `io.sapl.pdp.remote.oauth2.principal-name` | empty (defaults to `client-registration-id`) | Principal name used as cache key in Spring's `OAuth2AuthorizedClientManager`. Override only when you need distinct cached clients for the same registration. |
 | `io.sapl.pdp.remote.ignore-certificates` | `false` | Skip TLS certificate validation. Not for production. |
 
-You must configure exactly one authentication mechanism. Token relay is useful when each request to the PDP should carry the caller's identity, so the PDP can apply its own user-aware policies. The RSocket transport authenticates once at connection setup, so a single connection is bound to a single identity for its lifetime; use `oauth2.client-registration-id` for managed service-account JWTs over RSocket.
+You must configure exactly one authentication mechanism. Token relay is useful when each request to the PDP should carry the caller's identity, so the PDP can apply its own user-aware policies. The RSocket transport authenticates once at connection setup, so a single connection is bound to a single identity for its lifetime. Use `oauth2.client-registration-id` for managed service-account JWTs over RSocket.
+
+#### Client Resilience
+
+The remote PDP client treats every transport problem as an operational condition, never as a policy outcome, and never lets one surface as an exception. A connection drop, timeout, or decode error fails closed to `INDETERMINATE`, which the PEP enforces as a denial, so a transient PDP outage can never accidentally grant access.
+
+One-shot requests (`decideOnce`, `multiDecideAllOnce`) fail closed to `INDETERMINATE` immediately, with no retry, and never throw. The returned `Mono` always completes with a decision. In steady state the connection is warm, so only a cold or dropped connection fails closed.
+
+Subscriptions (the streaming `decide`, `multiDecide`, and `decideAll`) never terminate on a transport problem or on a server-side stream completion. The returned `Flux` never signals `onError` for a transport condition. Either condition emits one `INDETERMINATE` and then reconnects with bounded exponential backoff, indefinitely. Consecutive identical decisions are de-duplicated, so an outage yields a single `INDETERMINATE`, not a flood. A subscription ends only when the consumer cancels it or the client shuts down. This contract holds identically across the HTTP transport (`RemoteHttpPolicyDecisionPoint`) and the RSocket transport, and across every SAPL PEP client.
 
 ### Method Security Properties
 
 | Property | Default | Description |
 |---|---|---|
 | `io.sapl.method-security.adjust-transaction-order` | `true` | Reorder the `TransactionInterceptor` so the transaction wraps SAPL enforcement. Set to `false` if you have explicit AOP order requirements. See [Transaction Integration](#transaction-integration). |
-| `io.sapl.method-security.r2dbc-shim.enabled` | `true` | Wrap `DatabaseClient` for R2DBC query manipulation. Set to `false` to disable the shim. See [Disabling the Shim per Engine](#disabling-the-shim-per-engine). |
-| `io.sapl.method-security.mongo-shim.enabled` | `true` | Wrap `ReactiveMongoTemplate` for MongoDB query manipulation. Set to `false` to disable the shim. See [Disabling the Shim per Engine](#disabling-the-shim-per-engine). |
+| `io.sapl.method-security.r2dbc-shim.enabled` | `true` | Wrap `DatabaseClient` for R2DBC query rewriting. Set to `false` to disable the shim. See [Disabling the Shim per Engine](#disabling-the-shim-per-engine). |
+| `io.sapl.method-security.mongo-shim.enabled` | `true` | Wrap `ReactiveMongoTemplate` for MongoDB query rewriting. Set to `false` to disable the shim. See [Disabling the Shim per Engine](#disabling-the-shim-per-engine). |
 
 ### JWT Token Injection
 
@@ -1314,7 +1168,7 @@ The corresponding `pdp.json` configures the JWT PIP with public key resolution.
     "jwt": {
       "secretsKey": "jwt",
       "publicKeyServer": {
-        "uri": "http://auth-server:9000/public-key/{kid}",
+        "uri": "https://auth-server:9000/public-key/{kid}",
         "method": "GET",
         "keyCachingTtlMillis": 300000
       }
@@ -1322,6 +1176,8 @@ The corresponding `pdp.json` configures the JWT PIP with public key resolution.
   }
 }
 ```
+
+Always use an `https` URI for the public key server. Keys fetched over plain `http` can be substituted by a network attacker, who could then forge tokens the PIP would accept as trusted. TLS authenticates the key server and protects the keys in transit.
 
 ### Subject Field Stripping
 
@@ -1389,7 +1245,7 @@ By default, `src/main/resources/policies/`. The embedded PDP loads from this pat
 
 ## Next Steps
 
-The best way to learn is to try it. Start with method security on one or two endpoints. Write simple permit and deny policies. Once that works, add an obligation to see how constraints work, then a query manipulation obligation to see how the shim transparently filters at the database layer.
+The best way to learn is to try it. Start with method security on one or two endpoints. Write simple permit and deny policies. Once that works, add an obligation to see how constraints work, then a query rewriting obligation to see how the shim transparently filters at the database layer.
 
 For more details.
 

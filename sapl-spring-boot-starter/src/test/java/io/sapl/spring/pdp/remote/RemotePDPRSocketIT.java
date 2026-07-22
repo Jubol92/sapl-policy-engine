@@ -44,10 +44,11 @@ import reactor.test.StepVerifier;
 
 /**
  * End-to-end integration tests for the {@code rsocket} transport in the SAPL
- * Spring Boot Starter. Spins up a SAPL Node container with RSocket enabled,
- * configures the starter via Spring properties, then asserts that the
- * autowired {@link ReactivePolicyDecisionPoint} bean talks to the container
- * over the configured transport.
+ * Spring Boot Starter. Spins up a SAPL Node
+ * container with RSocket enabled, configures the starter via Spring properties,
+ * then asserts that the autowired
+ * {@link ReactivePolicyDecisionPoint} bean talks to the container over the
+ * configured transport.
  */
 @Testcontainers
 @DisplayName("RemotePDP Starter RSocket Integration Tests")
@@ -56,10 +57,11 @@ class RemotePDPRSocketIT {
 
     private static final int             RSOCKET_PORT      = 7000;
     private static final int             HTTP_PORT         = 8080;
-    private static final String          SAPL_SERVER_IMAGE = "ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT";
+    private static final String          SAPL_SERVER_IMAGE = System.getProperty("sapl.node.image",
+            "ghcr.io/heutelbeck/sapl-node:4.1.2");
     private static final ImagePullPolicy NEVER_PULL        = imageName -> false;
     private static final Duration        STARTUP           = Duration.ofMinutes(2);
-    private static final String          STARTUP_LOG       = ".*Started SaplNodeApplication.*\\n";
+    private static final String          STARTUP_LOG       = ".*SAPL Node ready.*\\n";
     private static final String          POLICIES_PATH     = "policies-rsocket/";
     private static final Duration        STEP_TIMEOUT      = Duration.ofSeconds(30);
 
@@ -83,7 +85,7 @@ class RemotePDPRSocketIT {
                 .withEnv("SAPL_PDP_RSOCKET_PORT", String.valueOf(RSOCKET_PORT))
                 .withEnv("IO_SAPL_NODE_ALLOWNOAUTH", "false").withEnv("IO_SAPL_NODE_ALLOWAPIKEYAUTH", "true")
                 .withEnv("IO_SAPL_NODE_USERS_0_ID", "test-apikey-client")
-                .withEnv("IO_SAPL_NODE_USERS_0_PDPID", "default")
+                .withEnv("IO_SAPL_NODE_USERS_0_PDPID", "default").withEnv("IO_SAPL_NODE_USERS_0_APIKEYID", "7A7ByyQd6U")
                 .withEnv("IO_SAPL_NODE_USERS_0_APIKEY", API_KEY_ENCODED)
                 .waitingFor(Wait.forLogMessage(STARTUP_LOG, 1).withStartupTimeout(STARTUP));
     }
@@ -118,7 +120,7 @@ class RemotePDPRSocketIT {
                 val properties = new String[] { "io.sapl.pdp.remote.enabled=true", "io.sapl.pdp.remote.type=rsocket",
                         "io.sapl.pdp.remote.host=" + container.getHost(),
                         "io.sapl.pdp.remote.port=" + container.getMappedPort(RSOCKET_PORT),
-                        "io.sapl.pdp.remote.bearer-token=" + API_KEY };
+                        "io.sapl.pdp.remote.bearer-token=" + API_KEY, "io.sapl.pdp.remote.allow-insecure-http=true" };
                 runWithPdp(properties, AuthorizationDecision.PERMIT);
             }
         }

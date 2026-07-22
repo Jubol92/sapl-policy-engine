@@ -24,7 +24,11 @@ import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
 import lombok.val;
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.databind.cfg.JsonNodeFeature;
 import tools.jackson.databind.json.JsonMapper;
+
+import java.io.IOException;
 
 /**
  * Function library providing JSON marshalling and unmarshalling operations.
@@ -88,6 +92,16 @@ public class JsonFunctionLibrary {
                 })
               }
             ```
+
+            ## Limits
+
+            To bound memory and computation on untrusted input, the following limits apply:
+
+            - The input is limited to 1 MB.
+            - Parsing is bounded to a maximum nesting depth of 500 and a maximum number length of 1000 characters.
+            - Serialization output is limited to 10000000 characters.
+
+            These limits apply because this input may originate from the authorization subscription or from policy information points, which are not vetted to the same degree as the policies and variables shipped with the PDP configuration.
             """;
 
     private static final String ERROR_FAILED_TO_PARSE     = "Failed to parse JSON: %s.";
@@ -99,7 +113,9 @@ public class JsonFunctionLibrary {
             }
             """;
 
-    private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
+    private static final JsonMapper JSON_MAPPER = JsonMapper
+            .builder(JsonFactory.builder().streamReadConstraints(TextParseLimits.STREAM_READ_CONSTRAINTS).build())
+            .enable(JsonNodeFeature.USE_BIG_DECIMAL_FOR_FLOATS).build();
 
     /**
      * Converts a well-formed JSON document into a SAPL value.
@@ -113,6 +129,9 @@ public class JsonFunctionLibrary {
             ```jsonToVal(TEXT json)```: Converts a well-formed JSON document into a SAPL value
             representing the content of the JSON document. Returns an error if the JSON is malformed.
 
+            Input longer than 1 MB (1048576 characters) is rejected with an error, and nesting
+            depth is bounded, so a hostile attribute value cannot exhaust the evaluation thread.
+
             **Example:**
             ```sapl
             policy "check-embedded-role"
@@ -122,6 +141,9 @@ public class JsonFunctionLibrary {
             ```
             """)
     public static Value jsonToVal(TextValue json) {
+        if (TextParseLimits.exceedsMaxInput(json.value())) {
+            return Value.error(TextParseLimits.ERROR_INPUT_TOO_LARGE, TextParseLimits.MAX_INPUT_CHARS);
+        }
         try {
             val jsonNode = JSON_MAPPER.readTree(json.value());
             return ValueJsonMarshaller.fromJsonNode(jsonNode);
@@ -157,9 +179,11 @@ public class JsonFunctionLibrary {
     public static Value valToJson(Value value) {
         try {
             val jsonNode   = ValueJsonMarshaller.toJsonNode(value);
-            val jsonString = JSON_MAPPER.writeValueAsString(jsonNode);
+            val jsonString = TextOutputLimits.write(writer -> JSON_MAPPER.writeValue(writer, jsonNode));
             return Value.of(jsonString);
-        } catch (JacksonException exception) {
+        } catch (TextOutputLimits.OutputLimitExceededException exception) {
+            return Value.error(exception.getMessage());
+        } catch (JacksonException | IllegalArgumentException | IOException exception) {
             return Value.error(ERROR_FAILED_TO_SERIALIZE, exception.getMessage());
         }
     }

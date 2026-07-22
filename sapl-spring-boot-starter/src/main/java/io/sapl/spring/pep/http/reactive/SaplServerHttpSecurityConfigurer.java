@@ -27,23 +27,24 @@ import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity.AuthorizeExchangeSpec;
 import org.springframework.security.config.web.server.ServerHttpSecurity.ExceptionHandlingSpec;
 
+import io.sapl.spring.config.PdpIdWebFilter;
 import io.sapl.spring.pep.constraints.EnforcementPlanner;
 import io.sapl.reactive.api.tenant.ReactiveTenantResolver;
 import lombok.val;
 
 /**
  * Reactive companion to
- * {@link io.sapl.spring.pep.http.servlet.SaplHttpSecurityConfigurer}. Wires
- * the SAPL reactive HTTP enforcement chain into a {@link ServerHttpSecurity}
- * build.
+ * {@link io.sapl.spring.pep.http.servlet.SaplHttpSecurityConfigurer}. Wires the
+ * SAPL reactive
+ * HTTP enforcement chain into a {@link ServerHttpSecurity} build.
  * <p>
  * The configurer pulls the {@link ReactiveSaplAuthorizationManager}, the
  * {@link SaplServerAccessDeniedHandler}, and the
  * {@link SaplHttpPepWebFilter} from the application context. It routes
- * {@code anyExchange()} through the SAPL authorization manager, installs
- * the SAPL access-denied handler on the exception-handling branch, and
- * adds the SAPL HTTP PEP web filter at Spring's authorization filter
- * position.
+ * {@code anyExchange()} through the SAPL
+ * authorization manager, installs the SAPL access-denied handler on the
+ * exception-handling branch, and adds the SAPL
+ * HTTP PEP web filter at Spring's authorization filter position.
  * <p>
  * Two entry points:
  *
@@ -57,10 +58,10 @@ import lombok.val;
  *                 exchange.getRequest().getMethod().name(), exchange.getRequest().getURI().getPath(), mapper))));
  * }</pre>
  *
- * Use {@link #subscriptionFactory(ReactiveAuthorizationSubscriptionFactory)}
- * to replace only the subscription shape, or
- * {@link #authorizationManager(ReactiveSaplAuthorizationManager)} to
- * install a fully custom manager.
+ * Use {@link #subscriptionFactory(ReactiveAuthorizationSubscriptionFactory)} to
+ * replace only the subscription shape, or
+ * {@link #authorizationManager(ReactiveSaplAuthorizationManager)} to install a
+ * fully custom manager.
  */
 public final class SaplServerHttpSecurityConfigurer {
 
@@ -74,20 +75,21 @@ public final class SaplServerHttpSecurityConfigurer {
     }
 
     /**
-     * Convenience static factory that returns a configurer bound to the
-     * given {@link ApplicationContext}.
+     * Convenience static factory that returns a configurer bound to the given
+     * {@link ApplicationContext}.
      */
     public static SaplServerHttpSecurityConfigurer fromContext(ApplicationContext context) {
         return new SaplServerHttpSecurityConfigurer(context);
     }
 
     /**
-     * Overrides the {@link ReactiveAuthorizationSubscriptionFactory} for
-     * this filter chain. Ignored when an explicit
-     * {@link #authorizationManager(ReactiveSaplAuthorizationManager)} is
-     * also set.
+     * Overrides the {@link ReactiveAuthorizationSubscriptionFactory} for this
+     * filter chain. Ignored when an explicit
+     * {@link #authorizationManager(ReactiveSaplAuthorizationManager)} is also set.
      *
-     * @param factory the factory to use for this chain.
+     * @param factory
+     * the factory to use for this chain.
+     *
      * @return this configurer for fluent chaining.
      */
     public SaplServerHttpSecurityConfigurer subscriptionFactory(ReactiveAuthorizationSubscriptionFactory factory) {
@@ -96,12 +98,14 @@ public final class SaplServerHttpSecurityConfigurer {
     }
 
     /**
-     * Replaces the {@link ReactiveSaplAuthorizationManager} for this filter
-     * chain in its entirety. When set,
-     * {@link #subscriptionFactory(ReactiveAuthorizationSubscriptionFactory)}
-     * is ignored.
+     * Replaces the {@link ReactiveSaplAuthorizationManager} for this filter chain
+     * in its entirety. When set,
+     * {@link #subscriptionFactory(ReactiveAuthorizationSubscriptionFactory)} is
+     * ignored.
      *
-     * @param manager the manager to use for this chain.
+     * @param manager
+     * the manager to use for this chain.
+     *
      * @return this configurer for fluent chaining.
      */
     public SaplServerHttpSecurityConfigurer authorizationManager(ReactiveSaplAuthorizationManager manager) {
@@ -118,13 +122,20 @@ public final class SaplServerHttpSecurityConfigurer {
         val webFilter     = context.getBean(SaplHttpPepWebFilter.class);
         http.authorizeExchange((AuthorizeExchangeSpec authorize) -> authorize.anyExchange().access(manager));
         http.exceptionHandling((ExceptionHandlingSpec exceptions) -> exceptions.accessDeniedHandler(deniedHandler));
+        // Tenant PDP id must enter the Reactor Context after authentication but before
+        // authorization, so the
+        // authorization manager's tenant resolver sees it. A global WebFilter cannot
+        // sit inside the security chain,
+        // so add it here just before AUTHORIZATION. Absent for single-tenant setups (no
+        // PdpIdAuthenticationExtractor).
+        context.getBeanProvider(PdpIdWebFilter.class).ifAvailable(
+                pdpIdWebFilter -> http.addFilterBefore(pdpIdWebFilter, SecurityWebFiltersOrder.AUTHORIZATION));
         http.addFilterAt(webFilter, SecurityWebFiltersOrder.AUTHORIZATION);
         return http;
     }
 
     /**
-     * Convenience that combines lookup and application with default
-     * settings:
+     * Convenience that combines lookup and application with default settings:
      * {@code SaplServerHttpSecurityConfigurer.apply(http, ctx)}.
      */
     public static ServerHttpSecurity apply(ServerHttpSecurity http, ApplicationContext context) {

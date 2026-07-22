@@ -18,6 +18,7 @@
 package io.sapl.functions.libraries;
 
 import io.sapl.api.model.ArrayValue;
+import io.sapl.api.model.ErrorValue;
 import io.sapl.api.model.ObjectValue;
 import io.sapl.api.model.Value;
 import io.sapl.functions.DefaultFunctionBroker;
@@ -28,6 +29,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -101,6 +103,24 @@ class GraphFunctionLibraryTests {
                 Value.of("unaussprechlichen-kulten"));
     }
 
+    @Test
+    void reachableWhenNullNeighborThenDoesNotCollideWithNodeNamedNull() {
+        val graph   = (ObjectValue) Value.ofJson("""
+                {
+                  "necronomicon":         ["pnakotic-manuscripts", null],
+                  "pnakotic-manuscripts": [],
+                  "null":                 ["rlyeh-text"],
+                  "rlyeh-text":           []
+                }
+                """);
+        val initial = Value.of("necronomicon");
+
+        val result = GraphFunctionLibrary.reachable(graph, initial);
+
+        assertThat(result).isInstanceOfSatisfying(ArrayValue.class, resultArray -> assertThat(resultArray)
+                .containsExactlyInAnyOrder(Value.of("necronomicon"), Value.of("pnakotic-manuscripts")));
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("emptyInputCases")
     void reachableWhenEmptyInputsThenReturnsExpectedSize(String description, ObjectValue graph, Value initial,
@@ -139,6 +159,41 @@ class GraphFunctionLibraryTests {
         assertThat(result).isInstanceOf(ArrayValue.class);
         val resultArray = (ArrayValue) result;
         assertThat(resultArray).containsExactlyInAnyOrder(Value.of("1"), Value.of("2"), Value.of("3"), Value.of("4"));
+    }
+
+    @Test
+    void reachableWhenNumericStartNodeThenSeedsItAndReachesTargets() {
+        val graph   = (ObjectValue) Value.ofJson("""
+                {
+                  "1": ["2", "3"],
+                  "2": ["4"],
+                  "3": [],
+                  "4": []
+                }
+                """);
+        val initial = Value.of(1);
+
+        val result = GraphFunctionLibrary.reachable(graph, initial);
+
+        assertThat(result).isInstanceOf(ArrayValue.class);
+        val resultArray = (ArrayValue) result;
+        assertThat(resultArray).containsExactlyInAnyOrder(Value.of("1"), Value.of("2"), Value.of("3"), Value.of("4"));
+    }
+
+    @Test
+    void isReachableWhenNumericStartNodeThenFindsReachableTarget() {
+        val graph = (ObjectValue) Value.ofJson("""
+                {
+                  "1": ["2", "3"],
+                  "2": ["4"],
+                  "3": [],
+                  "4": []
+                }
+                """);
+
+        val result = GraphFunctionLibrary.isReachable(graph, Value.of(1), Value.of("4"));
+
+        assertThat(result).isEqualTo(Value.TRUE);
     }
 
     @Test
@@ -429,6 +484,29 @@ class GraphFunctionLibraryTests {
     }
 
     @Test
+    @DisplayName("transitiveClosureProjection caps flattened projected values")
+    void transitiveClosureProjectionWhenProjectedValuesExceedMaximumThenError() {
+        val permissions = ArrayValue.builder();
+        val permission  = Value.of("read");
+        for (var i = 0; i <= 1_000_000; i++) {
+            permissions.add(permission);
+        }
+        val graph = ObjectValue.builder()
+                .put("role",
+                        ObjectValue.builder().put("children", Value.EMPTY_ARRAY)
+                                .put("attributes",
+                                        ObjectValue.builder().put("permissions", permissions.build()).build())
+                                .build())
+                .build();
+
+        val result = GraphFunctionLibrary.transitiveClosureProjection(graph, Value.of("children"),
+                Value.of("permissions"));
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).contains("projection").contains("1000000");
+    }
+
+    @Test
     @DisplayName("playground hierarchical RBAC example: closure + multi-root reachable")
     void playgroundHierarchicalRbacExampleWithTransitiveClosure() {
         val rolesHierarchy = (ObjectValue) Value.ofJson("""
@@ -468,5 +546,94 @@ class GraphFunctionLibraryTests {
 
         assertThat(result).containsExactlyInAnyOrder(Value.of("cso"), Value.of("security-manager"), Value.of("analyst"),
                 Value.of("market-analyst"));
+    }
+
+    @Test
+    @DisplayName("transitiveClosure handles a deep graph without stack overflow")
+    void transitiveClosureWhenDeepChainThenNoStackOverflow() throws InterruptedException {
+        val depth = 1000;
+        val json  = new StringBuilder("{");
+        for (var i = 0; i < depth; i++) {
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append("\"n").append(i).append("\":[");
+            if (i < depth - 1) {
+                json.append("\"n").append(i + 1).append('"');
+            }
+            json.append(']');
+        }
+        json.append('}');
+        val graph = (ObjectValue) Value.ofJson(json.toString());
+
+        val error  = new AtomicReference<Throwable>();
+        val result = new AtomicReference<Value>();
+        val worker = new Thread(null, () -> {
+                       try {
+                           result.set(GraphFunctionLibrary.transitiveClosure(graph));
+                       } catch (Throwable t) {
+                           error.set(t);
+                       }
+                   }, "graph-deep-closure", 128 * 1024);
+        worker.start();
+        worker.join();
+
+        val closure = (ObjectValue) result.get();
+        assertThat(error.get()).isNull();
+        assertThat((ArrayValue) closure.get("n0")).hasSize(depth);
+    }
+
+    @Test
+    void isReachableWhenPathExistsThenTrue() {
+        val graph = (ObjectValue) Value.ofJson("""
+                { "a": ["b"], "b": ["c"], "c": [] }
+                """);
+
+        assertThat(GraphFunctionLibrary.isReachable(graph, Value.of("a"), Value.of("c"))).isEqualTo(Value.TRUE);
+    }
+
+    @Test
+    void isReachableWhenNoPathThenFalse() {
+        val graph = (ObjectValue) Value.ofJson("""
+                { "a": ["b"], "b": ["c"], "c": [] }
+                """);
+
+        assertThat(GraphFunctionLibrary.isReachable(graph, Value.of("c"), Value.of("a"))).isEqualTo(Value.FALSE);
+    }
+
+    @Test
+    void isReachableWhenSourceEqualsTargetThenTrue() {
+        val graph = (ObjectValue) Value.ofJson("""
+                { "a": ["b"], "b": [] }
+                """);
+
+        assertThat(GraphFunctionLibrary.isReachable(graph, Value.of("a"), Value.of("a"))).isEqualTo(Value.TRUE);
+    }
+
+    @Test
+    void transitiveClosureWhenOutputExceedsMaximumThenError() {
+        val nodes   = 1500;
+        val builder = ObjectValue.builder();
+        for (var i = 0; i < nodes; i++) {
+            builder.put("n" + i, i < nodes - 1 ? Value.ofArray(Value.of("n" + (i + 1))) : Value.EMPTY_ARRAY);
+        }
+        val result = GraphFunctionLibrary.transitiveClosure(builder.build());
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).contains("exceeds the maximum");
+    }
+
+    @Test
+    @DisplayName("reachablePaths caps total emitted path steps to bound memory on untrusted graphs")
+    void reachablePathsWhenEmittedStepsExceedMaximumThenError() {
+        val nodes   = 1500;
+        val builder = ObjectValue.builder();
+        for (var i = 0; i < nodes; i++) {
+            builder.put("n" + i, i < nodes - 1 ? Value.ofArray(Value.of("n" + (i + 1))) : Value.EMPTY_ARRAY);
+        }
+        val result = GraphFunctionLibrary.reachablePaths(builder.build(), Value.of("n0"));
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).contains("exceeds the maximum");
     }
 }

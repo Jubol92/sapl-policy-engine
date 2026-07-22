@@ -25,20 +25,26 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.awaitility.Awaitility.await;
 
 @DisplayName("RealTimeScheduler")
 class RealTimeSchedulerTests {
 
+    private static final Instant REFERENCE = Instant.parse("2025-01-01T00:00:00Z");
+
+    private final Clock       clock = Clock.fixed(REFERENCE, ZoneOffset.UTC);
     private RealTimeScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new RealTimeScheduler();
+        scheduler = new RealTimeScheduler(clock);
     }
 
     @AfterEach
@@ -51,7 +57,7 @@ class RealTimeSchedulerTests {
     void whenScheduleAtFutureInstantThenTaskRunsBeforeDeadline() {
         val fired = new AtomicBoolean(false);
 
-        scheduler.scheduleAt(Clock.systemUTC().instant().plusMillis(50), () -> fired.set(true));
+        scheduler.scheduleAt(REFERENCE.plusMillis(50), () -> fired.set(true));
 
         await().atMost(Duration.ofSeconds(1)).untilTrue(fired);
     }
@@ -61,7 +67,7 @@ class RealTimeSchedulerTests {
     void whenScheduleAtPastInstantThenTaskRunsImmediately() {
         val fired = new AtomicBoolean(false);
 
-        scheduler.scheduleAt(Clock.systemUTC().instant().minusSeconds(1), () -> fired.set(true));
+        scheduler.scheduleAt(REFERENCE.minusSeconds(1), () -> fired.set(true));
 
         await().atMost(Duration.ofSeconds(1)).untilTrue(fired);
     }
@@ -71,7 +77,7 @@ class RealTimeSchedulerTests {
     void whenCancelBeforeFireThenTaskDoesNotRun() {
         val ranCount = new AtomicInteger();
 
-        val cancellable = scheduler.scheduleAt(Clock.systemUTC().instant().plusMillis(200), ranCount::incrementAndGet);
+        val cancellable = scheduler.scheduleAt(REFERENCE.plusMillis(200), ranCount::incrementAndGet);
         cancellable.cancel();
 
         await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofMillis(400))
@@ -79,14 +85,29 @@ class RealTimeSchedulerTests {
     }
 
     @Test
+    @DisplayName("scheduling a far-future instant clamps the delay instead of throwing")
+    void whenScheduleAtInstantBeyondNanoHorizonThenDoesNotThrowAndTaskStaysPending() {
+        val fired = new AtomicBoolean(false);
+
+        // 1000 years out exceeds the ~292-year long-nanosecond range, so the delay must
+        // saturate, not overflow.
+        val farFuture = REFERENCE.plus(Duration.ofDays(365L * 1000L));
+
+        assertThatCode(() -> scheduler.scheduleAt(farFuture, () -> fired.set(true))).doesNotThrowAnyException();
+
+        await().pollDelay(Duration.ofMillis(200)).atMost(Duration.ofMillis(400))
+                .untilAsserted(() -> assertThat(fired).isFalse());
+    }
+
+    @Test
     @DisplayName("a task that throws is logged and does not crash the scheduler")
     void whenTaskThrowsThenSubsequentTasksStillRun() {
         val secondRan = new AtomicBoolean(false);
 
-        scheduler.scheduleAt(Clock.systemUTC().instant().plusMillis(20), () -> {
+        scheduler.scheduleAt(REFERENCE.plusMillis(20), () -> {
             throw new RuntimeException("boom");
         });
-        scheduler.scheduleAt(Clock.systemUTC().instant().plusMillis(60), () -> secondRan.set(true));
+        scheduler.scheduleAt(REFERENCE.plusMillis(60), () -> secondRan.set(true));
 
         await().atMost(Duration.ofSeconds(1)).untilTrue(secondRan);
     }

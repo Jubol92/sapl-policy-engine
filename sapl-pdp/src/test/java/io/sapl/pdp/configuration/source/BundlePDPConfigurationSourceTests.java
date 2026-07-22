@@ -220,6 +220,33 @@ class BundlePDPConfigurationSourceTests {
     }
 
     @Test
+    void whenOneSubscriberThrowsThenOthersStillReceiveReloads() throws IOException {
+        createBundle(tempDir.resolve("dunwich.saplbundle"),
+                """
+                        { "algorithm": { "votingMode": "PRIORITY_DENY", "defaultDecision": "DENY", "errorHandling": "PROPAGATE" }, "configurationId": "dunwich-v1" }
+                        """,
+                "policy.sapl", "policy \"test\" permit true;");
+        source = new BundlePDPConfigurationSource(tempDir, developmentPolicy);
+
+        val recorder = new CapturingSubscriber();
+        source.subscribe(recorder);
+        // A throwing subscriber must not starve the others or kill the hot-reload
+        // file-watch thread.
+        source.subscribe(event -> {
+            throw new IllegalStateException("subscriber boom");
+        });
+
+        createBundle(tempDir.resolve("dunwich.saplbundle"),
+                """
+                        { "algorithm": { "votingMode": "PRIORITY_PERMIT", "defaultDecision": "PERMIT", "errorHandling": "PROPAGATE" }, "configurationId": "dunwich-v2" }
+                        """,
+                "policy.sapl", "policy \"updated\" deny true;");
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(recorder.configs())
+                .anyMatch(config -> config.combiningAlgorithm().equals(PERMIT_OVERRIDES)));
+    }
+
+    @Test
     void whenBundleContainsNestedArchiveThenBundleIsSkippedAndVoterSourceNotInvoked() throws IOException {
         val bundlePath = tempDir.resolve("malicious.saplbundle");
         createBundleWithNestedArchive(bundlePath);
@@ -246,16 +273,14 @@ class BundlePDPConfigurationSourceTests {
     }
 
     @Test
-    void whenBundleContainsNestedDirectoriesThenNestedFilesAreSkipped() throws IOException {
+    void whenBundleContainsNestedDirectoriesThenBundleIsRejected() throws IOException {
         val bundlePath = tempDir.resolve("nested.saplbundle");
         createBundleWithNestedDirectory(bundlePath);
         source = new BundlePDPConfigurationSource(tempDir, developmentPolicy);
 
         val configs = captureConfigurations(source);
 
-        assertThat(configs).hasSize(1);
-        assertThat(configs.getFirst().saplDocuments()).hasSize(1);
-        assertThat(configs.getFirst().saplDocuments().getFirst()).contains("root-policy");
+        assertThat(configs).isEmpty();
     }
 
     @Test
@@ -391,6 +416,32 @@ class BundlePDPConfigurationSourceTests {
         // Wait for file watcher to detect deletion and verify configuration is removed
         await().atMost(Duration.ofSeconds(5)).pollDelay(Duration.ofMillis(600))
                 .untilAsserted(() -> assertThat(capture.removedPdpIds()).contains("deletable"));
+    }
+
+    @Test
+    void whenStemlessBundleIsDeletedThenNoEmptyRemovalIsEmitted() throws IOException {
+        val bundlePath = tempDir.resolve(".saplbundle");
+        createBundle(bundlePath,
+                """
+                        { "algorithm": { "votingMode": "PRIORITY_DENY", "defaultDecision": "DENY", "errorHandling": "PROPAGATE" }, "configurationId": "stemless-v1" }
+                        """,
+                "policy.sapl", "policy \"stemless\" permit true;");
+
+        source = new BundlePDPConfigurationSource(tempDir, developmentPolicy);
+
+        val capture = new CapturingSubscriber();
+        source.subscribe(capture);
+
+        // The stemless name derives an empty pdpId, which the load path rejects,
+        // so no configuration was ever loaded for it.
+        assertThat(capture.configs()).isEmpty();
+
+        Files.delete(bundlePath);
+
+        // Deleting it must not emit a spurious Remove("") for a configuration that
+        // was never loaded.
+        await().during(Duration.ofMillis(800)).atMost(Duration.ofSeconds(2))
+                .untilAsserted(() -> assertThat(capture.removedPdpIds()).doesNotContain(""));
     }
 
     @Test

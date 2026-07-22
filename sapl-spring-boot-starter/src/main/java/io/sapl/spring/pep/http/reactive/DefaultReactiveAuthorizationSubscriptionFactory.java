@@ -23,18 +23,26 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.server.ServerWebExchange;
 
 import io.sapl.api.pdp.AuthorizationSubscription;
+import io.sapl.spring.subscriptions.CredentialRedaction;
 import lombok.RequiredArgsConstructor;
 import lombok.val;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Default {@link ReactiveAuthorizationSubscriptionFactory}: places the
- * resolved {@link Authentication} on {@code subject} and the serialized
- * {@link org.springframework.http.server.reactive.ServerHttpRequest} on
- * both {@code action} and {@code resource}, leaving {@code environment}
- * undefined. Registered automatically when no other
+ * Default {@link ReactiveAuthorizationSubscriptionFactory}: places the resolved
+ * {@link Authentication} on
+ * {@code subject} and the serialized
+ * {@link org.springframework.http.server.reactive.ServerHttpRequest} on both
+ * {@code action} and {@code resource}, leaving {@code environment} undefined.
+ * Registered automatically when no other
  * {@code ReactiveAuthorizationSubscriptionFactory} bean is present.
+ * <p>
+ * Well-known credential fields are redacted from the serialized subject and
+ * request (see {@link CredentialRedaction}). A caller that needs a credential
+ * in
+ * the subscription must register a custom
+ * {@code ReactiveAuthorizationSubscriptionFactory}.
  */
 @RequiredArgsConstructor
 public class DefaultReactiveAuthorizationSubscriptionFactory implements ReactiveAuthorizationSubscriptionFactory {
@@ -43,7 +51,8 @@ public class DefaultReactiveAuthorizationSubscriptionFactory implements Reactive
 
     @Override
     public Mono<AuthorizationSubscription> build(Authentication authentication, ServerWebExchange exchange) {
-        val requestValue = fromJsonNode(mapper.valueToTree(exchange.getRequest()));
-        return Mono.just(AuthorizationSubscription.of(authentication, requestValue, requestValue, mapper));
+        val subjectValue = fromJsonNode(CredentialRedaction.redact(mapper.valueToTree(authentication)));
+        val requestValue = fromJsonNode(CredentialRedaction.redact(mapper.valueToTree(exchange.getRequest())));
+        return Mono.just(AuthorizationSubscription.of(subjectValue, requestValue, requestValue, mapper));
     }
 }

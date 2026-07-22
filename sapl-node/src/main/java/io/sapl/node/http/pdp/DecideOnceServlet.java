@@ -27,6 +27,7 @@ import io.sapl.api.pdp.AuthorizationDecision;
 import io.sapl.api.pdp.AuthorizationSubscription;
 import io.sapl.node.auth.http.HttpAuthHandler;
 import io.sapl.node.auth.http.HttpAuthenticationException;
+import io.sapl.node.http.RequestBodyTooLargeException;
 import io.sapl.pdp.BlockingPolicyDecisionPoint;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -68,16 +69,36 @@ public class DecideOnceServlet extends AbstractBypassServlet {
         try (val in = request.getInputStream()) {
             subscription = mapper.readValue(in, AuthorizationSubscription.class);
         } catch (IOException | JacksonException e) {
+            if (RequestBodyTooLargeException.isCausedBy(e)) {
+                log.debug("Rejected oversized authorization subscription: {}", e.getMessage());
+                response.sendError(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE,
+                        "Request body exceeds the configured limit.");
+                return;
+            }
             log.debug("Failed to parse authorization subscription: {}", e.getMessage());
             response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Malformed authorization subscription.");
             return;
         }
 
-        val decision = pdp.decideOnce(subscription, pdpId);
+        AuthorizationDecision decision;
+        try {
+            decision = pdp.decideOnce(subscription, pdpId);
+        } catch (Exception e) {
+            // Fail closed: no raw 500 (stack leak). Return INDETERMINATE like the streaming
+            // servlet.
+            log.error("Decision evaluation failed for decide-once; returning INDETERMINATE.", e);
+            decision = AuthorizationDecision.INDETERMINATE;
+        }
         // Serialize first so the status code reflects the actual outcome.
         // Writing 200 then mapper.writeValue would leave the client with
         // "200 OK" plus a truncated body on a Jackson failure mid-write.
-        val body = mapper.writeValueAsBytes(decision);
+        byte[] body;
+        try {
+            body = mapper.writeValueAsBytes(decision);
+        } catch (Exception e) {
+            log.error("Failed to serialize decision for decide-once; returning INDETERMINATE.", e);
+            body = mapper.writeValueAsBytes(AuthorizationDecision.INDETERMINATE);
+        }
         response.setStatus(HttpServletResponse.SC_OK);
         response.setContentType(CONTENT_TYPE_JSON);
         response.setContentLength(body.length);

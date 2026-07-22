@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Locale;
 
 import org.jspecify.annotations.Nullable;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.InvalidMediaTypeException;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 
@@ -32,11 +34,12 @@ import tools.jackson.databind.SerializationContext;
 import tools.jackson.databind.ser.std.StdSerializer;
 
 /**
- * Jackson serializer for {@link ServerHttpRequest} that exposes the
- * unified policy-facing HTTP shape. Same field names and grouping as
- * {@link HttpServletRequestSerializer}, so a SAPL policy reads the same
- * fields regardless of whether the deployed PEP is on the reactive stack
- * or the servlet stack. Header keys are lowercased to match HTTP/2 wire
+ * Jackson serializer for {@link ServerHttpRequest} that exposes the unified
+ * policy-facing HTTP shape. Same field names
+ * and grouping as {@link HttpServletRequestSerializer}, so a SAPL policy reads
+ * the same fields regardless of whether
+ * the deployed PEP is on the reactive stack or the servlet stack. Header keys
+ * are lowercased to match HTTP/2 wire
  * format and Spring's case-insensitive {@code HttpHeaders} contract.
  */
 public class ServerHttpRequestSerializer extends StdSerializer<ServerHttpRequest> {
@@ -174,15 +177,16 @@ public class ServerHttpRequestSerializer extends StdSerializer<ServerHttpRequest
         if (parsed.proto() != null) {
             gen.writeStringProperty(HttpServletRequestSerializer.FORWARDED_PROTO, parsed.proto());
         }
-        if (parsed.port() != null) {
-            gen.writeNumberProperty(HttpServletRequestSerializer.FORWARDED_PORT, parsed.port());
+        val port = parsed.port();
+        if (port != null) {
+            gen.writeNumberProperty(HttpServletRequestSerializer.FORWARDED_PORT, port);
         }
         gen.writeEndObject();
     }
 
     private static void writeBodyMetadata(ServerHttpRequest request, JsonGenerator gen) {
         val headers     = request.getHeaders();
-        val contentType = headers.getContentType();
+        val contentType = contentTypeOf(headers);
         if (contentType != null) {
             gen.writeStringProperty(HttpServletRequestSerializer.CONTENT_TYPE, contentType.toString());
             val charset = charsetOf(contentType);
@@ -190,9 +194,25 @@ public class ServerHttpRequestSerializer extends StdSerializer<ServerHttpRequest
                 gen.writeStringProperty(HttpServletRequestSerializer.CHARACTER_ENCODING, charset.name());
             }
         }
-        val contentLength = headers.getContentLength();
+        val contentLength = contentLengthOf(headers);
         if (contentLength >= 0) {
             gen.writeNumberProperty(HttpServletRequestSerializer.CONTENT_LENGTH, contentLength);
+        }
+    }
+
+    private static @Nullable MediaType contentTypeOf(HttpHeaders headers) {
+        try {
+            return headers.getContentType();
+        } catch (InvalidMediaTypeException e) {
+            return null;
+        }
+    }
+
+    private static long contentLengthOf(HttpHeaders headers) {
+        try {
+            return headers.getContentLength();
+        } catch (NumberFormatException e) {
+            return -1L;
         }
     }
 

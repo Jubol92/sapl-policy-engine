@@ -26,6 +26,8 @@ import io.sapl.compiler.expressions.CompilationContext;
 import io.sapl.compiler.expressions.ExpressionCompiler;
 import io.sapl.compiler.expressions.SaplCompilerException;
 import io.sapl.compiler.index.SemanticHashing;
+import io.sapl.compiler.util.BoundedRegex;
+import io.sapl.compiler.util.BoundedRegularExpressionFactory;
 import lombok.NonNull;
 import lombok.experimental.UtilityClass;
 import lombok.val;
@@ -64,6 +66,7 @@ public class SchemaValidatorCompiler {
     private static final String ERROR_SCHEMA_MUST_BE_CONSTANT    = "Schema must be a constant object literal, not a runtime expression. "
             + "Variable references and function calls are not allowed in schema definitions.";
     private static final String ERROR_SCHEMA_MUST_BE_OBJECT      = "Schema must be an object, got: %s";
+    private static final String ERROR_SCHEMA_VALIDATION_FAILED   = "Schema validation failed: %s";
 
     private static final String SCHEMA_ID_FIELD = "$id";
 
@@ -126,7 +129,8 @@ public class SchemaValidatorCompiler {
     private static SchemaRegistry buildSchemaRegistry(CompilationContext ctx) {
         val schemasValue = ctx.getData().variables().get("schemas");
         if (!(schemasValue instanceof ArrayValue schemas)) {
-            return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
+            return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12,
+                    BoundedRegularExpressionFactory::applyTo);
         }
         val schemaMap = new HashMap<String, String>();
         for (val schema : schemas) {
@@ -139,10 +143,13 @@ public class SchemaValidatorCompiler {
             }
         }
         if (schemaMap.isEmpty()) {
-            return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
+            return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12,
+                    BoundedRegularExpressionFactory::applyTo);
         }
-        return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12,
-                builder -> builder.schemas(schemaMap));
+        return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12, builder -> {
+            builder.schemas(schemaMap);
+            BoundedRegularExpressionFactory.applyTo(builder);
+        });
     }
 
     record PrecompiledSchemaValidator(
@@ -158,9 +165,15 @@ public class SchemaValidatorCompiler {
             if (elementValue instanceof ErrorValue) {
                 return elementValue;
             }
-            val subjectNode = ValueJsonMarshaller.toJsonNode(elementValue);
-            val messages    = schema.validate(subjectNode);
-            return messages.isEmpty() ? Value.TRUE : Value.FALSE;
+            try {
+                val subjectNode = ValueJsonMarshaller.toJsonNode(elementValue);
+                val messages    = BoundedRegex.runWithSharedMatchBudget(() -> schema.validate(subjectNode));
+                return messages.isEmpty() ? Value.TRUE : Value.FALSE;
+            } catch (Throwable e) {
+                // Third-party validation on hostile input must never crash evaluation. Surface
+                // an ErrorValue.
+                return Value.errorAt(location, ERROR_SCHEMA_VALIDATION_FAILED, e.getMessage());
+            }
         }
 
         private Value getSubscriptionElement(EvaluationContext ctx) {
@@ -192,16 +205,19 @@ public class SchemaValidatorCompiler {
 
         @Override
         public Value evaluate(EvaluationContext ctx) {
+            // Kleene OR: a TRUE from any schema wins even if another errors. Surface an
+            // error only if none pass.
+            ErrorValue firstError = null;
             for (val validator : validators) {
                 val result = validator.evaluate(ctx);
-                if (result instanceof ErrorValue) {
-                    return result;
-                }
                 if (Value.TRUE.equals(result)) {
                     return Value.TRUE;
                 }
+                if (result instanceof ErrorValue error && firstError == null) {
+                    firstError = error;
+                }
             }
-            return Value.FALSE;
+            return firstError != null ? firstError : Value.FALSE;
         }
 
         @Override

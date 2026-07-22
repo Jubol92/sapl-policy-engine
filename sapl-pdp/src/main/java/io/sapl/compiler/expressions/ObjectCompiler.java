@@ -90,8 +90,8 @@ public class ObjectCompiler {
 
     /**
      * Object with all pure entries (values and pure operators, no streams).
-     * Constructed only when the compile-time scan reports zero stream entries;
-     * the {@link StreamOperator} branch in element dispatch is therefore
+     * Constructed only when the compile-time scan reports zero stream entries.
+     * The {@link StreamOperator} branch in element dispatch is therefore
      * unreachable and folds to an {@link ErrorValue} defensively.
      */
     record PureObject(String[] keys, List<CompiledExpression> entries, SourceLocation location)
@@ -143,11 +143,11 @@ public class ObjectCompiler {
             for (int i = 0; i < entries.size(); i++) {
                 val entry     = entries.get(i);
                 val entryHash = switch (entry) {
-                              case Value v                -> (long) v.hashCode();
+                              case Value v                -> SemanticHashing.valueHash(v);
                               case PureOperator p         -> p.semanticHash();
                               case StreamOperator ignored -> (long) entry.hashCode();
                               };
-                hash = SemanticHashing.ordered(hash, keys[i].hashCode(), entryHash);
+                hash = SemanticHashing.ordered(hash, SemanticHashing.textHash(keys[i]), entryHash);
             }
             return SemanticHashing.ordered(hash, Objects.hashCode(location));
         }
@@ -181,7 +181,7 @@ public class ObjectCompiler {
      * any encountered {@link ErrorValue}. Holds the first error and returns
      * it after the full walk completes. Drops entries whose value is
      * {@link UndefinedValue} per object literal semantics. {@code null} from
-     * a child sets the incomplete flag; on a clean walk with no error,
+     * a child sets the incomplete flag. On a clean walk with no error,
      * returns the assembled object. Precedence at the end:
      * error &gt; null &gt; built object.
      */

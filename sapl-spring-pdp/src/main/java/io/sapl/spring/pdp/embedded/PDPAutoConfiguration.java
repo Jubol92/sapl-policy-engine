@@ -34,6 +34,7 @@ import io.sapl.attributes.broker.repository.InMemoryAttributeRepository;
 import io.sapl.functions.libraries.crypto.PemUtils;
 import io.sapl.pdp.BlockingPolicyDecisionPoint;
 import io.sapl.pdp.IdFactory;
+import io.sapl.pdp.CoarseClock;
 import io.sapl.pdp.ThreadLocalRandomIdFactory;
 import io.sapl.pdp.configuration.PdpVoterSource;
 import io.sapl.pdp.configuration.bundle.BundleSecurityPolicy;
@@ -63,6 +64,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Role;
 import tools.jackson.databind.json.JsonMapper;
@@ -75,6 +77,7 @@ import java.security.PublicKey;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
 import java.time.Clock;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -92,7 +95,7 @@ import java.util.Set;
  * {@link PDPConfigurationSource}, {@link PdpVoterSource},
  * {@link IdFactory}, and the {@link ReactivePolicyDecisionPoint} itself. Beans
  * that hold real resources implement {@link AutoCloseable} (the voter
- * source and the configuration source); Spring invokes their
+ * source and the configuration source). Spring invokes their
  * {@code close()} method on context shutdown.
  * <p>
  * Every bean is declared {@link ConditionalOnMissingBean} so an
@@ -121,6 +124,7 @@ import java.util.Set;
  */
 @Slf4j
 @AutoConfiguration
+@ImportRuntimeHints(SaplOperatorRuntimeHints.class)
 @EnableConfigurationProperties(EmbeddedPDPProperties.class)
 @ConditionalOnClass(name = "io.sapl.pdp.PolicyDecisionPointBuilder")
 @ConditionalOnProperty(prefix = "io.sapl.pdp.embedded", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -135,6 +139,25 @@ public class PDPAutoConfiguration {
     @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
     Clock clock() {
         return Clock.systemUTC();
+    }
+
+    /**
+     * Source for observability timestamps (decision trace, attribute value
+     * freshness). Defaults to the temporal {@code clock}. When
+     * {@code io.sapl.pdp.embedded.coarse-timestamps=true}, a coarse-resolution
+     * cached clock is used instead, which is cheaper per decision at high
+     * throughput at the cost of coarser timestamp precision. The coarse clock is
+     * owned by the application context and closed on shutdown.
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "timestampSource")
+    @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
+    InstantSource timestampSource(EmbeddedPDPProperties properties, Clock clock) {
+        if (properties.isCoarseTimestamps()) {
+            log.debug("Using coarse-resolution clock for observability timestamps.");
+            return new CoarseClock();
+        }
+        return clock;
     }
 
     @Bean
@@ -180,12 +203,12 @@ public class PDPAutoConfiguration {
         case REMOTE_BUNDLES  -> {
             val props          = properties.getRemoteBundles();
             val securityPolicy = createBundleSecurityPolicy(properties.getBundleSecurity(), resolvedPath);
-            log.info("Loading policies from remote bundles: {}", props.getBaseUrl());
-            val sourceConfig = new RemoteBundleSourceConfig(props.getBaseUrl(), props.getPdpIds(),
+            val sourceConfig   = new RemoteBundleSourceConfig(props.getBaseUrl(), props.getPdpIds(),
                     RemoteBundleSourceConfig.FetchMode.valueOf(props.getMode().name()), props.getPollInterval(),
                     props.getLongPollTimeout(), props.getAuthHeaderName(), props.getAuthHeaderValue(),
-                    props.isFollowRedirects(), securityPolicy, props.getPdpIdPollIntervals(), props.getFirstBackoff(),
-                    props.getMaxBackoff());
+                    props.isAllowInsecureHttp(), props.isFollowRedirects(), securityPolicy,
+                    props.getPdpIdPollIntervals(), props.getFirstBackoff(), props.getMaxBackoff());
+            log.info("Loading policies from remote bundles: {}", sourceConfig.baseUrl());
             yield new RemoteBundlePDPConfigurationSource(sourceConfig);
         }
         case RESOURCES       -> {
@@ -228,9 +251,9 @@ public class PDPAutoConfiguration {
     @ConditionalOnMissingBean
     @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
     BlockingPolicyDecisionPoint blockingPolicyDecisionPoint(PdpVoterSource pdpVoterSource,
-            AttributeBroker attributeBroker, IdFactory idFactory) {
+            AttributeBroker attributeBroker, IdFactory idFactory, InstantSource timestampSource) {
         log.debug("Deploying embedded Policy Decision Point.");
-        return new BlockingPolicyDecisionPoint(pdpVoterSource, attributeBroker, idFactory);
+        return new BlockingPolicyDecisionPoint(pdpVoterSource, attributeBroker, idFactory, timestampSource);
     }
 
     /**
@@ -256,10 +279,12 @@ public class PDPAutoConfiguration {
     @ConditionalOnMissingBean
     @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
     PolicyInformationPointAttributeBroker policyInformationPointAttributeBroker(JsonMapper mapper, Clock clock,
-            ApplicationContext applicationContext, InMemoryAttributeRepository inMemoryAttributeRepository) {
+            InstantSource timestampSource, ApplicationContext applicationContext,
+            InMemoryAttributeRepository inMemoryAttributeRepository) {
         val pips = collectPolicyInformationPoints(applicationContext);
         log.debug("Building catalog AttributeBroker: SAPL default PIPs plus {} custom PIP instances.", pips.size());
-        return buildPolicyInformationPointAttributeBroker(clock, mapper, true, pips, inMemoryAttributeRepository);
+        return buildPolicyInformationPointAttributeBroker(clock, timestampSource, mapper, true, pips,
+                inMemoryAttributeRepository);
     }
 
     @Bean
@@ -338,7 +363,7 @@ public class PDPAutoConfiguration {
                 keyBytes = Base64.getDecoder().decode(keyContent.replaceAll("\\s", ""));
             }
             return buildEd25519PublicKey(keyBytes);
-        } catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
+        } catch (NoSuchAlgorithmException | InvalidKeySpecException | IllegalArgumentException e) {
             throw new IllegalStateException(ERROR_FAILED_TO_PARSE_PUBLIC_KEY, e);
         }
     }

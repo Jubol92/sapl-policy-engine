@@ -13,7 +13,7 @@ The SAPL PDP server exposes two network APIs for authorization decisions: HTTP/J
 
 The HTTP API requires no SDK. Any application that can make HTTP requests can use the PDP.
 
-All endpoints accept `POST` requests with `application/json` bodies. Streaming endpoints return `text/event-stream` (Server-Sent Events); one-shot endpoints return `application/json`. All endpoints are located under a shared base URL, typically `https://<host>:<port>/api/pdp/`.
+All endpoints accept `POST` requests with `application/json` bodies. Streaming endpoints return `text/event-stream` (Server-Sent Events). One-shot endpoints return `application/json`. All endpoints are located under a shared base URL, typically `https://<host>:<port>/api/pdp/`.
 
 ### Endpoint Overview
 
@@ -165,9 +165,11 @@ curl -N -X POST http://localhost:8080/api/pdp/decide \
 **Example with the SAPL CLI** (streams decisions as NDJSON):
 
 ```shell
-sapl decide --remote --url http://localhost:8080 --token sapl_... \
+sapl decide --remote --insecure --url http://localhost:8080 --token sapl_... \
   -s '"alice"' -a '"read"' -r '"document"'
 ```
+
+Sending credentials over a plaintext `http://` connection is refused by default. The `--insecure` flag accepts that risk for local development. Drop it and use an `https://` URL in production.
 
 #### Decide Once (One-Shot)
 
@@ -206,14 +208,14 @@ Returns a single authorization decision and closes the connection. Use this for 
 **Example with the SAPL CLI:**
 
 ```shell
-sapl decide-once --remote --url http://localhost:8080 --token sapl_... \
+sapl decide-once --remote --insecure --url http://localhost:8080 --token sapl_... \
   -s '{"username":"alice","role":"doctor"}' -a '"read"' -r '{"type":"patient_record","patientId":123}'
 ```
 
 The `sapl check` command returns an exit code instead of JSON output, making it suitable for shell scripts and CI/CD pipelines:
 
 ```shell
-sapl check --remote --url http://localhost:8080 --token sapl_... \
+sapl check --remote --insecure --url http://localhost:8080 --token sapl_... \
   -s '"alice"' -a '"read"' -r '"document"' && echo "PERMIT"
 ```
 
@@ -339,7 +341,7 @@ A PEP encountering connectivity issues or errors with the PDP server must treat 
 
 ### Keep-Alive
 
-Streaming connections use periodic SSE comment events (`: keep-alive`) to prevent firewalls and proxies from closing idle connections. A PEP should treat a prolonged absence of any events (decisions or keep-alives) as a connection failure.
+Streaming connections use periodic SSE comment events (`: keep-alive`) to prevent firewalls and proxies from closing idle connections and to let the server detect clients that drop without closing. A PEP should treat a prolonged absence of any events (decisions or keep-alives) as a connection failure.
 
 ### Reverse Proxy Configuration
 
@@ -352,14 +354,14 @@ Requirements for any reverse proxy in front of SAPL Node:
 3. **Preserve chunked transfer encoding.** Do not add `Content-Length` headers to streaming responses.
 4. **Forward the HTTP method.** All PDP endpoints use POST.
 
-SAPL Node can send periodic keep-alive frames on idle connections:
+SAPL Node sends periodic keep-alive frames on idle connections, every 15 seconds by default:
 
 ```yaml
 io.sapl.node:
   keep-alive: 15
 ```
 
-Set the proxy read timeout above this interval (e.g., 60 seconds). See [Configuration](../7_2_Configuration/) for the property reference.
+Set the proxy read timeout above this interval (e.g., 60 seconds). Keep-alive is always on and cannot be disabled. See [Configuration](../7_2_Configuration/) for the property reference.
 
 #### nginx
 
@@ -402,7 +404,7 @@ The SAPL Policy Engine ships with **SAPL Node**, a standalone PDP server. SAPL N
 
 ## RSocket API
 
-The RSocket API provides the same five operations as HTTP using protobuf serialization over persistent TCP or Unix domain socket (UDS) connections. It is significantly faster than HTTP/JSON for high-throughput workloads. RSocket is disabled by default. For server configuration, see [Configuration](../7_2_Configuration/#rsocket-properties).
+The RSocket API provides the same five operations as HTTP using protobuf serialization over persistent TCP or Unix domain socket (UDS) connections. It is significantly faster than HTTP/JSON for high-throughput workloads. RSocket is enabled by default on port 7000, bound to `127.0.0.1`. For server configuration, see [Configuration](../7_2_Configuration/#rsocket-properties).
 
 ### Wire Format
 
@@ -452,6 +454,7 @@ enum Decision {
   PERMIT = 1;
   DENY = 2;
   NOT_APPLICABLE = 3;
+  SUSPEND = 4;
 }
 
 message Value {
@@ -503,7 +506,7 @@ If authentication fails, the server rejects the setup with a `REJECTED_SETUP` er
 
 ### Connection Lifecycle
 
-RSocket connections are persistent. Connection lifetime is bounded by credential expiry (JWT `exp` claim) and an optional server-configured maximum. The effective lifetime is the minimum of these two bounds. Expired connections are disposed by the server; clients must reconnect.
+RSocket connections are persistent. Connection lifetime is bounded by credential expiry (JWT `exp` claim) and an optional server-configured maximum. The effective lifetime is the minimum of these two bounds. Expired connections are disposed by the server. Clients must reconnect.
 
 ### Error Handling
 

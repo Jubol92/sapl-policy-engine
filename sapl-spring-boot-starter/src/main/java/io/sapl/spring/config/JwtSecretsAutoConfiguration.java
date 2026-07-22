@@ -34,8 +34,8 @@ import org.springframework.security.core.Authentication;
  * authorization subscription secrets.
  * <p>
  * When enabled, this configuration extracts the raw encoded JWT from
- * JwtAuthenticationToken instances and merges it into subscription secrets
- * so the JWT PIP can access it securely.
+ * JwtAuthenticationToken instances and merges it
+ * into subscription secrets so the JWT PIP can access it securely.
  * <p>
  * Activation requires:
  * <ul>
@@ -50,35 +50,38 @@ import org.springframework.security.core.Authentication;
 @ConditionalOnClass(name = "org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken")
 public class JwtSecretsAutoConfiguration {
 
-    private static final String WARN_JWT_EXTRACTION_FAILED = "Could not extract JWT from authentication: {}";
+    private static final String WARN_JWT_EXTRACTION_FAILED = "Could not extract JWT from authentication.";
 
     /**
      * Creates a SubscriptionSecretsInjector that extracts the bearer token from
-     * JwtAuthenticationToken and adds it to subscription secrets.
+     * JwtAuthenticationToken and adds it to
+     * subscription secrets.
      *
-     * @param properties the JWT properties
+     * @param properties
+     * the JWT properties
+     *
      * @return a SubscriptionSecretsInjector for JWT tokens
      */
     @Bean
     SubscriptionSecretsInjector jwtSubscriptionSecretsInjector(SaplJwtProperties properties) {
         val secretsKey = properties.getSecretsKey();
-        log.info("JWT secrets injection enabled with secrets key '{}'", secretsKey);
+        log.info("JWT secrets injection enabled.");
 
         return authentication -> {
             try {
                 val jwtAuthClass = Class.forName(
                         "org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken");
-                if (!jwtAuthClass.isInstance(authentication))
+                if (!jwtAuthClass.isInstance(authentication)) {
                     return Value.EMPTY_OBJECT;
-
+                }
                 val getToken      = jwtAuthClass.getMethod("getToken");
                 val token         = getToken.invoke(authentication);
                 val getTokenValue = token.getClass().getMethod("getTokenValue");
                 val tokenValue    = (String) getTokenValue.invoke(token);
 
                 return ObjectValue.builder().put(secretsKey, Value.of(tokenValue)).build();
-            } catch (Exception e) {
-                log.warn(WARN_JWT_EXTRACTION_FAILED, e.getMessage());
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                log.warn(WARN_JWT_EXTRACTION_FAILED);
                 return Value.EMPTY_OBJECT;
             }
         };

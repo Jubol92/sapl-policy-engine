@@ -19,6 +19,7 @@ package io.sapl.compiler.combining;
 
 import io.sapl.api.model.Value;
 import io.sapl.api.pdp.Decision;
+import io.sapl.ast.Outcome;
 import io.sapl.compiler.document.PureVoter;
 import io.sapl.compiler.document.StreamVoter;
 import io.sapl.compiler.document.Vote;
@@ -497,9 +498,11 @@ class UnanimousVoteCompilerTests {
                 arguments("unanimous or deny", Decision.DENY, false),
                 arguments("unanimous or permit", Decision.PERMIT, false),
                 arguments("unanimous or abstain", Decision.NOT_APPLICABLE, false),
+                arguments("unanimous or suspend", Decision.SUSPEND, false),
                 arguments("unanimous strict or deny", Decision.DENY, true),
                 arguments("unanimous strict or permit", Decision.PERMIT, true),
-                arguments("unanimous strict or abstain", Decision.NOT_APPLICABLE, true)
+                arguments("unanimous strict or abstain", Decision.NOT_APPLICABLE, true),
+                arguments("unanimous strict or suspend", Decision.SUSPEND, true)
             );
         }
         // @formatter:on
@@ -874,6 +877,53 @@ class UnanimousVoteCompilerTests {
             val result   = evaluatePolicySetWithPathEquivalenceCheck(compiled, ctx);
 
             assertThat(result.authorizationDecision().decision()).isEqualTo(Decision.SUSPEND);
+        }
+    }
+
+    @Nested
+    @DisplayName("INDETERMINATE set outcome includes the short-circuited tail potential")
+    class IndeterminateOutcomeCompletion {
+
+        private static final String SUBSCRIPTION = """
+                { "subject": "alice", "action": "read", "resource": "data" }
+                """;
+
+        @Test
+        @DisplayName("constant disagreeing policies (static fold) carry the full PERMIT_OR_DENY_OR_SUSPEND potential")
+        void whenConstantDisagreementThenOutcomeIncludesAllEffects() {
+            val compiled = compilePolicySet("""
+                    set "test"
+                    unanimous or deny errors propagate
+
+                    policy "p1" permit
+                    policy "p2" deny
+                    policy "p3" suspend
+                    """);
+            val result   = evaluatePolicySetWithPathEquivalenceCheck(compiled, subscriptionContext(SUBSCRIPTION));
+
+            assertThat(result).satisfies(r -> {
+                assertThat(r.authorizationDecision().decision()).isEqualTo(Decision.INDETERMINATE);
+                assertThat(r.outcome()).isEqualTo(Outcome.PERMIT_OR_DENY_OR_SUSPEND);
+            });
+        }
+
+        @Test
+        @DisplayName("runtime disagreeing policies carry the full PERMIT_OR_DENY_OR_SUSPEND potential")
+        void whenRuntimeDisagreementThenOutcomeIncludesAllEffects() {
+            val compiled = compilePolicySet("""
+                    set "test"
+                    unanimous or deny errors propagate
+
+                    policy "p1" permit subject == "alice";
+                    policy "p2" deny subject == "alice";
+                    policy "p3" suspend subject == "alice";
+                    """);
+            val result   = evaluatePolicySetWithPathEquivalenceCheck(compiled, subscriptionContext(SUBSCRIPTION));
+
+            assertThat(result).satisfies(r -> {
+                assertThat(r.authorizationDecision().decision()).isEqualTo(Decision.INDETERMINATE);
+                assertThat(r.outcome()).isEqualTo(Outcome.PERMIT_OR_DENY_OR_SUSPEND);
+            });
         }
     }
 }

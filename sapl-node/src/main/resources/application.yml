@@ -34,7 +34,9 @@ spring:
   cache:
     type: caffeine
     caffeine:
-      spec: maximumSize=1000,expireAfterWrite=1h,recordStats
+      # expireAfterWrite is the auth revocation SLA: a revoked API key keeps working until its
+      # cache entry expires. 5m matches io.sapl.node.http.auth-cache.positive-ttl so both stacks agree.
+      spec: maximumSize=1000,expireAfterWrite=5m,recordStats
     cache-names:
       - ApiKeyCache
       - buckets
@@ -126,6 +128,10 @@ io.sapl:
     # scalar:
     #   oauth-client-id: "sapl-node-scalar"
 
+    # OpenID Authorization API 1.0 binding at /access/v1/evaluation.
+    # openid-authz-api:
+    #   enabled: true
+
     # User entries for Basic Auth and API Key authentication.
     # Each user is associated with a pdp-id for multi-tenant routing.
     #
@@ -148,9 +154,14 @@ io.sapl:
     # --- Keep-Alive ---
     #
     # Interval in seconds between keep-alive comment frames on idle SSE
-    # streams. Prevents firewalls and proxies from dropping inactive TCP
-    # connections. Set to 0 to disable.
+    # streams. Prevents proxies and firewalls from dropping inactive
+    # connections and lets the server detect clients that drop without
+    # closing. Always on; default 15 seconds (values below 1 are raised).
     keep-alive: 15
+
+    # Maximum number of entries accepted in a MultiAuthorizationSubscription
+    # on public HTTP and RSocket PDP endpoints.
+    max-multi-subscription-count: 256
 
   # --- PDP Policy Source ---
   #
@@ -238,10 +249,11 @@ io.sapl:
     #   pdp-ids:
     #     - default
     #   mode: POLLING
-    #   poll-interval: 30s
+    #   poll-interval: 5s
     #   # long-poll-timeout: 30s
     #   # auth-header-name: Authorization
     #   # auth-header-value: "Bearer <token>"
+    #   # allow-insecure-http: false
     #   # follow-redirects: true
 
 # --- API Documentation (Scalar UI on top of springdoc-generated OpenAPI) ---
@@ -284,11 +296,20 @@ scalar:
 # --- RSocket (Protobuf) ---
 #
 # High-performance binary transport using RSocket with protobuf serialization.
-# Disabled by default. Enable for applications that need lower latency than
-# HTTP/JSON. Clients connect via RemotePolicyDecisionPoint.builder().rsocket().
+# Enabled by default, listening on 127.0.0.1:7000. Clients connect via
+# RemotePolicyDecisionPoint.builder().rsocket(). Disable explicitly when the
+# endpoint is unused, for example in container layouts that publish only the
+# HTTP/JSON port.
+#
+# Like server.address, the RSocket transport binds to 127.0.0.1 by default so
+# the cleartext protobuf endpoint is not reachable from other hosts out of the
+# box. To accept remote connections, set sapl.pdp.rsocket.address to 0.0.0.0 (or
+# a specific interface) and enable TLS via sapl.pdp.rsocket.ssl.bundle. The
+# docker profile sets the address to 0.0.0.0 so the container is reachable.
 #
 # sapl.pdp.rsocket:
-#   enabled: true
+#   enabled: false
+#   address: 127.0.0.1
 #   port: 7000
 
 # --- Rate Limiting ---

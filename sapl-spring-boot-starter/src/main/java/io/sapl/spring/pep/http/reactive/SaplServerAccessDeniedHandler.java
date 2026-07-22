@@ -32,13 +32,17 @@ import reactor.core.publisher.Mono;
 
 /**
  * Reactive {@link ServerAccessDeniedHandler} that fires
- * {@link HttpDenialSignal} against the {@link EnforcementPlan} published by
- * {@link ReactiveSaplAuthorizationManager} so policy obligations can shape
- * the deny response (status, headers, body, redirect).
+ * {@link HttpDenialSignal} against the {@link EnforcementPlan}
+ * published by {@link ReactiveSaplAuthorizationManager} so policy obligations
+ * can shape the deny response (status,
+ * headers, body, redirect).
  * <p>
- * Falls back to a Spring default 403 response when no plan is present,
- * when no handler claims the denial, or when an obligation handler fails.
- * Otherwise commits the buffered response shaped by the handlers.
+ * Falls back to a Spring default 403 response when no plan is present, when no
+ * handler is scheduled at the denial signal, or when an obligation handler
+ * fails. Otherwise the buffered response is seeded with a 403 deny status and
+ * committed, so an obligation that shapes only headers or body without setting
+ * a
+ * status still returns 403 rather than the underlying default.
  */
 public class SaplServerAccessDeniedHandler implements ServerAccessDeniedHandler {
 
@@ -51,8 +55,9 @@ public class SaplServerAccessDeniedHandler implements ServerAccessDeniedHandler 
             return fallback.handle(exchange, denied);
         }
         val mutableResponse = new ReactiveMutableHttpResponse(exchange.getResponse());
-        val result          = plan.execute(HttpDenialSignal.of(mutableResponse), false);
-        if (result.failureState() || !mutableResponse.isModified()) {
+        mutableResponse.setStatusCode(HttpStatus.FORBIDDEN);
+        val result = plan.execute(HttpDenialSignal.of(mutableResponse), false);
+        if (result.failureState()) {
             return fallback.handle(exchange, denied);
         }
         return mutableResponse.commit();

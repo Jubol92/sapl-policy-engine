@@ -26,6 +26,7 @@ import org.springframework.r2dbc.core.PreparedOperation;
 import org.springframework.r2dbc.core.binding.BindTarget;
 import org.springframework.security.access.AccessDeniedException;
 
+import io.sapl.spring.pep.constraints.ConstraintType;
 import io.sapl.spring.pep.constraints.EnforcementPlan;
 import io.sapl.spring.pep.constraints.EnforcementPlanContext;
 import io.sapl.spring.pep.constraints.Signal.SqlShimSignal;
@@ -34,38 +35,43 @@ import lombok.val;
 
 /**
  * AOP {@link MethodInterceptor} for the R2DBC {@code DatabaseClient} proxy.
- * Synchronously substitutes the SQL argument of {@code sql(String)},
- * {@code sql(Supplier<String>)}, and {@code sql(PreparedOperation<?>)} with a
- * lazy variant that applies the SAPL shim rewrite at the moment the
- * supplier is resolved. The supplier is resolved by Spring R2DBC's internal
- * execution at subscription time, on a thread where the active
- * {@link EnforcementPlan} is reachable via the {@link EnforcementPlanContext}
- * thread-local (kept current by Reactor's automatic context propagation, which
- * the R2DBC shim auto-configuration enables).
+ * Synchronously substitutes the SQL argument
+ * of {@code sql(String)}, {@code sql(Supplier<String>)}, and
+ * {@code sql(PreparedOperation<?>)} with a lazy variant that
+ * applies the SAPL shim rewrite at the moment the supplier is resolved. The
+ * supplier is resolved by Spring R2DBC's
+ * internal execution at subscription time, on a thread where the active
+ * {@link EnforcementPlan} is reachable via the
+ * {@link EnforcementPlanContext} thread-local (kept current by Reactor's
+ * automatic context propagation, which the R2DBC
+ * shim auto-configuration enables).
  * <p>
  * Catches every R2DBC query path because all paths bottom out at
  * {@code DatabaseClient.sql(...)}:
  * <ul>
  * <li>{@code R2dbcEntityTemplate.select/...} -> internally renders the
- * structured {@code Query} and calls {@code sql(...)};</li>
+ * structured {@code Query} and calls
+ * {@code sql(...)};</li>
  * <li>derived repository queries built by {@code PartTreeR2dbcQuery} ->
- * {@code DatabaseClient.sql(PreparedOperation)} via the
- * {@code sql(Supplier<String>)} overload;</li>
+ * {@code DatabaseClient.sql(PreparedOperation)}
+ * via the {@code sql(Supplier<String>)} overload;</li>
  * <li>{@code @Query}-annotated repository methods ->
- * {@code DatabaseClient.sql(PreparedOperation)} via the same overload;</li>
+ * {@code DatabaseClient.sql(PreparedOperation)} via the same
+ * overload.</li>
  * <li>direct user calls to {@code databaseClient.sql(...)}.</li>
  * </ul>
  * <p>
  * No fluent-chain wrapping required: the user's {@code .bind(...)} /
  * {@code .fetch().all()} chain proceeds on the real
- * {@code GenericExecuteSpec}; only the SQL string the chain is built around
- * is the lazy-rewrite. JSqlParser AST manipulation only adds new conditions
- * and never reorders or removes existing parameter placeholders, so the
- * chain's bind positions remain valid against the rewritten SQL.
+ * {@code GenericExecuteSpec}; only the SQL string the chain is built around is
+ * the lazy-rewrite. JSqlParser AST
+ * rewriting only adds new conditions and never reorders or removes existing
+ * parameter placeholders, so the chain's
+ * bind positions remain valid against the rewritten SQL.
  */
 public class DatabaseClientShimMethodInterceptor implements MethodInterceptor {
 
-    private static final String ERROR_ACCESS_DENIED_OBLIGATION_FAILED = "Access Denied. A SQL query-manipulation obligation handler failed.";
+    private static final String ERROR_ACCESS_DENIED_OBLIGATION_FAILED = "Access Denied. A SQL query-rewriting obligation handler failed.";
 
     private static final String METHOD_SQL = "sql";
 
@@ -107,15 +113,26 @@ public class DatabaseClientShimMethodInterceptor implements MethodInterceptor {
         if (result.value() instanceof Present<?>(var v) && v instanceof String rewritten) {
             return rewritten;
         }
+        // A SQL-rewrite obligation that ran without producing usable rewritten SQL
+        // must fail closed: running the original, un-narrowed query would silently
+        // drop the obligation. Advice-only rewrites degrade to the original.
+        if (hasSqlRewriteObligation(plan)) {
+            throw new AccessDeniedException(ERROR_ACCESS_DENIED_OBLIGATION_FAILED);
+        }
         return originalSql;
     }
 
+    private static boolean hasSqlRewriteObligation(EnforcementPlan plan) {
+        return plan.entriesFor(SqlShimSignal.SIGNAL_TYPE).stream()
+                .anyMatch(entry -> entry.constraintType() == ConstraintType.OBLIGATION);
+    }
+
     /**
-     * Wrapping {@link PreparedOperation} that returns the SAPL-rewritten SQL
-     * from {@link #get()} while delegating {@link #bindTo(BindTarget)} to the
-     * original. Bind positions/names stay valid because the rewrite only
-     * adds new conditions; it never reorders or removes existing parameter
-     * placeholders.
+     * Wrapping {@link PreparedOperation} that returns the SAPL-rewritten SQL from
+     * {@link #get()} while delegating
+     * {@link #bindTo(BindTarget)} to the original. Bind positions/names stay valid
+     * because the rewrite only adds new
+     * conditions. It never reorders or removes existing parameter placeholders.
      */
     private record RewritingPreparedOperation(PreparedOperation<?> delegate) implements PreparedOperation<Object> {
 

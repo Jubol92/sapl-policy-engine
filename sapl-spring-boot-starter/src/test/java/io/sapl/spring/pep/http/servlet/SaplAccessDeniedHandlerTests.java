@@ -84,7 +84,8 @@ class SaplAccessDeniedHandlerTests {
         @Test
         @DisplayName("denial handler is a Runner that does not shape the response: falls back to 403")
         void runnerOnlyDoesNotShape() throws Exception {
-            ConstraintHandler.Runner h        = () -> { /* logs only */ };
+            ConstraintHandler.Runner h        = () -> {
+                                                  /* logs only */ };
             val                      plan     = planFor(denyWith("audit"),
                     provider(constraint -> ConstraintHandlerProvider.constraintIsOfType(constraint, "audit")
                             ? List.of(new ScopedConstraintHandler(h, Signal.HttpDenialSignal.SIGNAL_TYPE, 0))
@@ -134,6 +135,44 @@ class SaplAccessDeniedHandlerTests {
             assertThat(response.getStatus()).isEqualTo(451);
             assertThat(response.getContentAsString()).isEqualTo("denied by policy");
             assertThat(response.getContentType()).startsWith("text/plain");
+        }
+
+        @Test
+        @DisplayName("handler that shapes headers/body but sets no status commits 403, not 200")
+        void shapesWithoutStatusStaysDenied() throws Exception {
+            ConstraintHandler.Consumer<MutableHttpResponse> h        = resp -> {
+                                                                         resp.setHeader("Retry-After", "120");
+                                                                         resp.writeBody("text/plain;charset=UTF-8",
+                                                                                 "denied by policy");
+                                                                     };
+            val                                             plan     = planFor(denyWith("audit"),
+                    provider(constraint -> ConstraintHandlerProvider.constraintIsOfType(constraint, "audit")
+                            ? List.of(new ScopedConstraintHandler(h, Signal.HttpDenialSignal.SIGNAL_TYPE, 0))
+                            : List.of()));
+            val                                             request  = requestFor(plan);
+            val                                             response = new MockHttpServletResponse();
+            handler.handle(request, response, DENIED);
+            assertThat(response.getStatus()).isEqualTo(403);
+            assertThat(response.getHeader("Retry-After")).isEqualTo("120");
+            assertThat(response.getContentAsString()).isEqualTo("denied by policy");
+        }
+
+        @Test
+        @DisplayName("handler that shapes only headers commits a denied response with those headers")
+        void whenDenialHandlerShapesOnlyHeadersThenHeadersAreCommitted() throws Exception {
+            val h        = (ConstraintHandler.Consumer<MutableHttpResponse>) resp -> resp.headers().set("Retry-After",
+                    "120");
+            val plan     = planFor(denyWith("retry"),
+                    provider(constraint -> ConstraintHandlerProvider.constraintIsOfType(constraint, "retry")
+                            ? List.of(new ScopedConstraintHandler(h, Signal.HttpDenialSignal.SIGNAL_TYPE, 0))
+                            : List.of()));
+            val request  = requestFor(plan);
+            val response = new MockHttpServletResponse();
+
+            handler.handle(request, response, DENIED);
+
+            assertThat(response.getStatus()).isEqualTo(403);
+            assertThat(response.getHeader("Retry-After")).isEqualTo("120");
         }
 
         @Test

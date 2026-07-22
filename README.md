@@ -15,7 +15,7 @@
   &middot;
   <a href="https://playground.sapl.io/">Playground</a>
   &middot;
-  <a href="https://sapl.io/scenarios/spring/">Scenarios</a>
+  <a href="https://sapl.io/guides/spring/">Scenarios</a>
   &middot;
   <a href="https://sapl.io/docs/latest/">Docs</a>
   &middot;
@@ -96,7 +96,7 @@ Add the starter:
 <dependency>
     <groupId>io.sapl</groupId>
     <artifactId>sapl-spring-boot-starter</artifactId>
-    <version>4.1.0-SNAPSHOT</version>
+    <version>4.1.2</version>
 </dependency>
 ```
 
@@ -119,7 +119,7 @@ permit
     resource == "patient";
 ```
 
-The [Spring scenario](https://sapl.io/scenarios/spring/) walks through a complete application step by step.
+The [Spring scenario](https://sapl.io/guides/spring/) walks through a complete application step by step.
 
 </details>
 
@@ -177,11 +177,11 @@ Coverage: Policy Hit 100.00%  Condition Hit 100.00%
 
 Working demos with code walkthroughs:
 
-- [Spring Security](https://sapl.io/scenarios/spring/) -- method-level ABAC in a Spring Boot application
-- [AI Tool Authorization](https://sapl.io/scenarios/ai-tools/) -- per-tool gating for Spring AI
-- [RAG Pipeline](https://sapl.io/scenarios/ai-rag/) -- dynamic query rewriting for retrieval-augmented generation
-- [Human-in-the-Loop](https://sapl.io/scenarios/ai-hitl/) -- policy-driven approval workflows for AI tool calls
-- [MCP Server](https://sapl.io/scenarios/ai-mcp/) -- authorize tool calls, resources, and prompts in MCP servers
+- [Spring Security](https://sapl.io/guides/spring/) -- method-level ABAC in a Spring Boot application
+- [AI Tool Authorization](https://sapl.io/guides/ai-tools/) -- per-tool gating for Spring AI
+- [RAG Pipeline](https://sapl.io/guides/ai-rag/) -- dynamic query rewriting for retrieval-augmented generation
+- [Human-in-the-Loop](https://sapl.io/guides/ai-hitl/) -- policy-driven approval workflows for AI tool calls
+- [MCP Server](https://sapl.io/guides/ai-mcp/) -- authorize tool calls, resources, and prompts in MCP servers
 
 ## Get involved
 
@@ -199,8 +199,23 @@ The SAPL language server provides syntax highlighting, diagnostics, content assi
 
 | SAPL  | Java  | Spring Boot |
 |-------|-------|-------------|
+| 4.1.x | 21+   | 4.1.x       |
 | 4.0.x | 21+   | 4.0.x       |
 | 3.0.x | 17+   | 3.x         |
+
+## Project Origin
+
+SAPL is maintained by Dominic Heutelbeck and developed in the context of work
+at [FTK e.V.](https://ftk.de), the Research Institute for Telecommunication
+and Cooperation in Dortmund, Germany.
+
+SAPL originated in European research and has received funding from the European
+Union's Horizon 2020 research and innovation programme under Grant Agreement No.
+[957852](https://cordis.europa.eu/project/id/957852) (VPP4Islands) and from the
+European Union's Horizon Europe programme under Grant Agreement No.
+[101080923](https://cordis.europa.eu/project/id/101080923) (SMILE). The views
+expressed are those of the authors and do not necessarily reflect those of the
+European Commission.
 
 ## Contributing
 
@@ -247,9 +262,25 @@ repositories {
 </details>
 
 <details>
+<summary>Quality gates</summary>
+
+The public [SonarCloud project](https://sonarcloud.io/dashboard?id=heutelbeck_sapl-policy-engine)
+tracks code quality and security analysis. Release CI waits for the SonarCloud
+quality gate, so releases are cut from a passing gate. False positives are
+tracked in SonarCloud rather than suppressed in source code.
+
+</details>
+
+<details>
 <summary>SBOM</summary>
 
-Need a [Software Bill of Materials](https://www.cisa.gov/sbom)? See [dependency graph](https://github.com/heutelbeck/sapl-policy-engine/network/dependencies).
+Need a [Software Bill of Materials](https://www.cisa.gov/sbom)? The SAPL Node executable JAR embeds a CycloneDX JSON SBOM at `META-INF/sbom/application.cdx.json`.
+
+```bash
+jar xf sapl-node-4.1.2.jar META-INF/sbom/application.cdx.json
+```
+
+For repository dependency visibility, see the public [GitHub dependency graph](https://github.com/heutelbeck/sapl-policy-engine/network/dependencies).
 
 </details>
 

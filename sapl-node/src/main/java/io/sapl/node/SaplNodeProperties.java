@@ -26,7 +26,7 @@ import java.util.Map;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-import io.sapl.node.auth.SecretGenerator;
+import io.sapl.api.pdp.StreamingPolicyDecisionPoint;
 import io.sapl.node.boot.SaplStartupConfigurationException;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -40,8 +40,6 @@ import lombok.val;
 @ConfigurationProperties(prefix = "io.sapl.node")
 public class SaplNodeProperties implements InitializingBean {
 
-    public static final String DEFAULT_PDP_ID = "default";
-
     private static final String ERROR_DUPLICATE_API_KEY_ID  = "SAPL Node refused to start. Duplicate api-key-id '%s' in user configuration.";
     private static final String ACTION_DUPLICATE_API_KEY_ID = """
             Each api-key-id under io.sapl.node.users must be unique. The
@@ -53,6 +51,17 @@ public class SaplNodeProperties implements InitializingBean {
               sapl generate apikey --id <user-id>
 
             then replace the duplicates.""";
+
+    private static final String ERROR_MISSING_API_KEY_ID  = "SAPL Node refused to start. User '%s' has an api-key but no api-key-id configured.";
+    private static final String ACTION_MISSING_API_KEY_ID = """
+            Every api-key user entry needs an api-key-id, the middle segment of
+            the wire token sapl_<id>_<secret>, so the server can find the entry.
+
+            Generate fresh credentials with:
+
+              sapl generate apikey --id <user-id>
+
+            then copy both the api-key-id and api-key into the user entry.""";
 
     private static final String ERROR_MISSING_PDP_ID  = "SAPL Node refused to start. User '%s' has no pdp-id configured and reject-on-missing-pdp-id is enabled.";
     private static final String ACTION_MISSING_PDP_ID = """
@@ -68,18 +77,9 @@ public class SaplNodeProperties implements InitializingBean {
             See the multi-tenant configuration reference at
             https://sapl.io/docs/latest/7_2_Configuration for details.""";
 
-    private static final String ERROR_SHORT_API_KEY  = "SAPL Node refused to start. An apiKey in the user configuration is shorter than %d characters.";
-    private static final String ACTION_SHORT_API_KEY = """
-            API keys must be long enough to resist brute force. Generate a
-            fresh credential with:
-
-              sapl generate apikey --id <user-id>
-
-            and paste the encoded value into the user entry.""";
-
     // Authentication methods
     private boolean allowNoAuth     = false;
-    private boolean allowBasicAuth  = true;
+    private boolean allowBasicAuth  = false;
     private boolean allowApiKeyAuth = false;
     private boolean allowOauth2Auth = false;
 
@@ -88,7 +88,7 @@ public class SaplNodeProperties implements InitializingBean {
     // has called every setter, so the binder's setter ordering does not
     // affect the outcome.
     private boolean rejectOnMissingPdpId = false;
-    private String  defaultPdpId         = DEFAULT_PDP_ID;
+    private String  defaultPdpId         = StreamingPolicyDecisionPoint.DEFAULT_PDP_ID;
 
     // User entries with unified credentials.
     private List<UserEntry> users = new ArrayList<>();
@@ -133,7 +133,7 @@ public class SaplNodeProperties implements InitializingBean {
         val nextIndex = new HashMap<String, UserEntry>();
         for (UserEntry user : users) {
             if (user.getApiKey() != null) {
-                assertIsValidApiKey(user.getApiKey());
+                requireApiKeyId(user);
                 warnIfApiKeyLooksPlaintext(user);
             }
             normalizeOrRejectPdpId(user);
@@ -147,18 +147,24 @@ public class SaplNodeProperties implements InitializingBean {
     }
 
     private void warnIfApiKeyLooksPlaintext(UserEntry user) {
-        // Spring's PasswordEncoder marks encoded values with an {algo} prefix
-        // (e.g. {argon2id$...}). A configured apiKey lacking that prefix is
-        // almost certainly the plaintext from `sapl generate apikey` instead
-        // of the encoded line; matching will silently fail at every request
-        // because passwordEncoder.matches expects the encoded form.
+        // Two formats are accepted by the matcher: Spring's delegated form
+        // {algo}<hash> (e.g. {argon2id}$argon2id$v=19$...) and the bare PHC
+        // string $argon2*$... produced directly by Argon2PasswordEncoder.
+        // A configured apiKey matching neither shape is almost certainly
+        // the plaintext from `sapl generate apikey` instead of the encoded
+        // line, and the matcher will silently fail at every request.
         val key = user.getApiKey();
-        if (!key.startsWith("{")) {
-            log.warn("User '{}' has an apiKey that does not look encoded "
-                    + "(no {{algo}} prefix). The matcher requires the encoded "
-                    + "form; configure the {{argon2id$...}} value from the "
-                    + "generator output, not the plaintext key.", user.getId());
+        if (!looksEncoded(key)) {
+            log.warn("User '{}' has an apiKey that does not look encoded. "
+                    + "The matcher requires the encoded form; configure the "
+                    + "{{argon2id}}... or $argon2id$... value from the generator " + "output, not the plaintext key.",
+                    user.getId());
         }
+    }
+
+    private static boolean looksEncoded(String key) {
+        return key.startsWith("{") || key.startsWith("$argon2id$") || key.startsWith("$argon2i$")
+                || key.startsWith("$argon2d$");
     }
 
     /**
@@ -167,7 +173,7 @@ public class SaplNodeProperties implements InitializingBean {
      * {@link #setUsers} time; users without an {@code api-key-id} configured
      * are omitted.
      *
-     * @return immutable map by api-key-id; empty when no users configured
+     * @return immutable map by api-key-id. Empty when no users configured
      */
     public Map<String, UserEntry> getApiKeyIdIndex() {
         return apiKeyIdIndex;
@@ -193,10 +199,11 @@ public class SaplNodeProperties implements InitializingBean {
         }
     }
 
-    private void assertIsValidApiKey(String key) {
-        if (key.length() < SecretGenerator.MIN_API_KEY_LENGTH) {
-            throw new SaplStartupConfigurationException(
-                    ERROR_SHORT_API_KEY.formatted(SecretGenerator.MIN_API_KEY_LENGTH), ACTION_SHORT_API_KEY);
+    private static void requireApiKeyId(UserEntry user) {
+        val apiKeyId = user.getApiKeyId();
+        if (apiKeyId == null || apiKeyId.isBlank()) {
+            throw new SaplStartupConfigurationException(ERROR_MISSING_API_KEY_ID.formatted(user.getId()),
+                    ACTION_MISSING_API_KEY_ID);
         }
     }
 
@@ -226,7 +233,11 @@ public class SaplNodeProperties implements InitializingBean {
      */
     @Data
     public static class OAuthConfig {
-        private String pdpIdClaim = "sapl_pdp_id";
+        private String       pdpIdClaim = "sapl_pdp_id";
+        private List<String> audiences  = new ArrayList<>();
+        // Secure by default: a JWT without an exp claim is rejected. It would grant
+        // non-expiring access.
+        private boolean allowJwtWithoutExpiry = false;
     }
 
 }

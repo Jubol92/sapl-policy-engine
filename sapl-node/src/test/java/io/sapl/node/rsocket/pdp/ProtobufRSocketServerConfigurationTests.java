@@ -58,9 +58,11 @@ import lombok.val;
 @ExtendWith(MockitoExtension.class)
 class ProtobufRSocketServerConfigurationTests {
 
-    private static final int    PORT         = 7000;
-    private static final int    PAYLOAD_SIZE = 65_536;
-    private static final String BUNDLE_NAME  = "rsocket-tls";
+    private static final String BIND_ADDRESS            = "127.0.0.1";
+    private static final String BUNDLE_NAME             = "rsocket-tls";
+    private static final int    MAX_MULTI_SUBSCRIPTIONS = 256;
+    private static final int    PAYLOAD_SIZE            = 65_536;
+    private static final int    PORT                    = 7000;
 
     @Mock
     private BlockingPolicyDecisionPoint blockingPdp;
@@ -83,8 +85,8 @@ class ProtobufRSocketServerConfigurationTests {
         @Test
         @DisplayName("no bundle name configured leaves TLS off and the lifecycle starts in plain TCP mode")
         void whenNoBundleNameThenLifecycleBuiltWithoutSsl() {
-            val lifecycle = sut.protobufRSocketServer(true, PORT, null, PAYLOAD_SIZE, null, blockingPdp, pdp,
-                    authenticators, sslBundlesProvider);
+            val lifecycle = sut.protobufRSocketServer(true, BIND_ADDRESS, PORT, null, PAYLOAD_SIZE,
+                    MAX_MULTI_SUBSCRIPTIONS, null, blockingPdp, pdp, authenticators, sslBundlesProvider);
 
             assertThat(lifecycle).isNotNull().satisfies(l -> assertThat(l.isAutoStartup()).isTrue());
         }
@@ -92,8 +94,8 @@ class ProtobufRSocketServerConfigurationTests {
         @Test
         @DisplayName("blank bundle name is treated as not configured (operator-friendly default)")
         void whenBlankBundleNameThenLifecycleBuiltWithoutSsl() {
-            val lifecycle = sut.protobufRSocketServer(true, PORT, null, PAYLOAD_SIZE, "   ", blockingPdp, pdp,
-                    authenticators, sslBundlesProvider);
+            val lifecycle = sut.protobufRSocketServer(true, BIND_ADDRESS, PORT, null, PAYLOAD_SIZE,
+                    MAX_MULTI_SUBSCRIPTIONS, "   ", blockingPdp, pdp, authenticators, sslBundlesProvider);
 
             assertThat(lifecycle).isNotNull();
         }
@@ -103,9 +105,10 @@ class ProtobufRSocketServerConfigurationTests {
         void whenBundleNameSetButRegistryAbsentThenThrows() {
             when(sslBundlesProvider.getIfAvailable()).thenReturn(null);
 
-            assertThatThrownBy(() -> sut.protobufRSocketServer(true, PORT, null, PAYLOAD_SIZE, BUNDLE_NAME, blockingPdp,
-                    pdp, authenticators, sslBundlesProvider)).isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining(BUNDLE_NAME).hasMessageContaining("SslBundles");
+            assertThatThrownBy(() -> sut.protobufRSocketServer(true, BIND_ADDRESS, PORT, null, PAYLOAD_SIZE,
+                    MAX_MULTI_SUBSCRIPTIONS, BUNDLE_NAME, blockingPdp, pdp, authenticators, sslBundlesProvider))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining(BUNDLE_NAME)
+                    .hasMessageContaining("SslBundles");
         }
 
         @Test
@@ -115,9 +118,10 @@ class ProtobufRSocketServerConfigurationTests {
             when(registry.getBundle(BUNDLE_NAME))
                     .thenThrow(new NoSuchSslBundleException(BUNDLE_NAME, "not configured"));
 
-            assertThatThrownBy(() -> sut.protobufRSocketServer(true, PORT, null, PAYLOAD_SIZE, BUNDLE_NAME, blockingPdp,
-                    pdp, authenticators, sslBundlesProvider)).isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining(BUNDLE_NAME).hasCauseInstanceOf(NoSuchSslBundleException.class);
+            assertThatThrownBy(() -> sut.protobufRSocketServer(true, BIND_ADDRESS, PORT, null, PAYLOAD_SIZE,
+                    MAX_MULTI_SUBSCRIPTIONS, BUNDLE_NAME, blockingPdp, pdp, authenticators, sslBundlesProvider))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining(BUNDLE_NAME)
+                    .hasCauseInstanceOf(NoSuchSslBundleException.class);
         }
 
         @Test
@@ -133,8 +137,9 @@ class ProtobufRSocketServerConfigurationTests {
             lenient().when(bundle.getManagers()).thenReturn(managers);
             lenient().when(managers.getKeyManagerFactory()).thenReturn(keyManagerFactory);
 
-            assertThatCode(() -> sut.protobufRSocketServer(true, PORT, null, PAYLOAD_SIZE, BUNDLE_NAME, blockingPdp,
-                    pdp, authenticators, sslBundlesProvider)).doesNotThrowAnyException();
+            assertThatCode(() -> sut.protobufRSocketServer(true, BIND_ADDRESS, PORT, null, PAYLOAD_SIZE,
+                    MAX_MULTI_SUBSCRIPTIONS, BUNDLE_NAME, blockingPdp, pdp, authenticators, sslBundlesProvider))
+                    .doesNotThrowAnyException();
         }
     }
 }

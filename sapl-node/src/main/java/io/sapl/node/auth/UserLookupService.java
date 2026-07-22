@@ -42,6 +42,10 @@ public class UserLookupService {
     public UserLookupService(SaplNodeProperties properties, PasswordEncoder passwordEncoder) {
         this.properties      = properties;
         this.passwordEncoder = passwordEncoder;
+        // Encoded with the encoder's default Argon2 parameters. The constant-time miss
+        // path holds only
+        // while configured secrets/api-key hashes use those same parameters (the case
+        // when produced by this encoder).
         this.dummyArgon2Hash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -60,13 +64,38 @@ public class UserLookupService {
     }
 
     /**
+     * Verifies Basic-auth credentials with constant work.
+     * <p>
+     * Exactly one Argon2 verification runs whether or not the username exists
+     * (the user's secret when present, a fixed dummy hash otherwise), so an
+     * unknown username cannot be distinguished from a known one with a wrong
+     * password by response timing.
+     *
+     * @param username the presented username
+     * @param password the presented raw password
+     * @return the matching user entry, or empty if the username is unknown or
+     * the password does not match
+     */
+    public Optional<UserEntry> verifyBasicCredentials(String username, String password) {
+        val userOpt = findByBasicUsername(username);
+        val secret  = userOpt.map(user -> user.getBasic().getSecret()).orElse(null);
+        // A found user with a missing or blank secret must not short-circuit the
+        // Argon2 verification (which would leak the username via timing). Verify
+        // against the dummy hash so exactly one full-cost verification runs on
+        // every path, and such a user can never authenticate.
+        val hasSecret = secret != null && !secret.isBlank();
+        val encoded   = hasSecret ? secret : dummyArgon2Hash;
+        val matches   = passwordEncoder.matches(password, encoded);
+        return userOpt.isPresent() && hasSecret && matches ? userOpt : Optional.empty();
+    }
+
+    /**
      * Finds a user by API key.
      * <p>
-     * Wire format: {@code sapl_<id>_<secret>}. When the {@code id} segment is
-     * present in the user configuration's {@code api-key-id} index, lookup is
-     * O(1) plus a single Argon2 verification. Configurations that pre-date
-     * the {@code api-key-id} field fall back to an O(N) scan so existing
-     * deployments keep working until keys are rotated.
+     * Wire format: {@code sapl_<id>_<secret>}. The {@code id} segment is looked
+     * up in the user configuration's {@code api-key-id} index, so a match needs
+     * one index lookup and a single Argon2 verification. A key whose id is not
+     * indexed is rejected.
      * <p>
      * The miss path performs a dummy Argon2 verify so response latency does
      * not reveal whether a given {@code api-key-id} exists in the config.
@@ -79,24 +108,17 @@ public class UserLookupService {
             return Optional.empty();
         }
         val apiKeyId = extractApiKeyId(rawApiKey);
-        if (apiKeyId != null) {
-            val candidate = properties.getApiKeyIdIndex().get(apiKeyId);
-            if (candidate != null && candidate.getApiKey() != null
-                    && passwordEncoder.matches(rawApiKey, candidate.getApiKey())) {
-                return Optional.of(candidate);
-            }
-            // Constant-time padding: a missing api-key-id must take the same
-            // wall-clock time as a present-but-wrong one. Otherwise an
-            // attacker can enumerate the configured ids by timing alone.
-            passwordEncoder.matches(rawApiKey, dummyArgon2Hash);
+        if (apiKeyId == null) {
+            return Optional.empty();
         }
-        // Backward-compatible fallback: scan users without api-key-id wired up
-        // (older configurations). Same O(N * Argon2) shape as before.
-        for (val user : properties.getUsers()) {
-            val encodedKey = user.getApiKey();
-            if (user.getApiKeyId() == null && encodedKey != null && passwordEncoder.matches(rawApiKey, encodedKey)) {
-                return Optional.of(user);
-            }
+        val candidate    = properties.getApiKeyIdIndex().get(apiKeyId);
+        val hasCandidate = candidate != null && candidate.getApiKey() != null;
+        // Always run exactly one Argon2 verification (dummy hash when absent), so
+        // timing does not leak configured ids.
+        val encodedToCheck = hasCandidate ? candidate.getApiKey() : dummyArgon2Hash;
+        val matches        = passwordEncoder.matches(rawApiKey, encodedToCheck);
+        if (hasCandidate && matches) {
+            return Optional.of(candidate);
         }
         return Optional.empty();
     }

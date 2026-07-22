@@ -27,6 +27,7 @@ import io.sapl.spring.pep.constraints.EnforcementPlan;
 import io.sapl.spring.pep.constraints.Signal.HttpRequestMutationSignal;
 import io.sapl.spring.pep.constraints.Signal.HttpResponseSignal;
 import io.sapl.spring.pep.http.HttpEnforcementContext;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
@@ -36,46 +37,60 @@ import lombok.val;
 
 /**
  * Servlet filter that fires the HTTP request-mutation and response signals
- * against the {@link EnforcementPlan} published by
+ * against the {@link EnforcementPlan}
+ * published by
  * {@link io.sapl.spring.pep.http.servlet.SaplAuthorizationManager}.
  * <p>
  * Sits immediately after Spring Security's {@code AuthorizationFilter}. On
- * every request that reaches it (the request was permitted by the
- * authorization manager) the filter:
+ * every request that reaches it (the request
+ * was permitted by the authorization manager) the filter:
  * <ol>
- * <li>Reads the active plan from the request attribute. If none is present
- * (the manager did not run) it passes through unchanged.</li>
- * <li>Wraps the request in a {@link ServletMutableHttpRequest} only when
- * the plan schedules at least one handler at
- * {@link HttpRequestMutationSignal}, fires the signal so handlers can
- * inject headers or attributes, and forwards the wrapped request down the
- * chain only when at least one handler actually mutated it; otherwise the
- * original request goes through and the wrapper is discarded.</li>
- * <li>Wraps the response in a {@link ServletMutableHttpResponse} only when
- * the plan schedules at least one handler at {@link HttpResponseSignal},
- * lets the chain write into the buffer, fires the signal so handlers can
- * read or replace status, headers, and body, then flushes the buffer to
- * the client.</li>
+ * <li>Reads the active plan from the request attribute. If none is present (the
+ * manager did not run) it passes through
+ * unchanged.</li>
+ * <li>Wraps the request in a {@link ServletMutableHttpRequest} only when the
+ * plan schedules at least one handler at
+ * {@link HttpRequestMutationSignal}, fires the signal so handlers can inject
+ * headers or attributes, and forwards the
+ * wrapped request down the chain only when at least one handler actually
+ * mutated it. Otherwise the original request
+ * goes through and the wrapper is discarded.</li>
+ * <li>Wraps the response in a {@link ServletMutableHttpResponse} only when the
+ * plan schedules at least one handler at
+ * {@link HttpResponseSignal}, lets the chain write into the buffer, fires the
+ * signal so handlers can read or replace
+ * status, headers, and body, then flushes the buffer to the client.</li>
  * </ol>
  * <p>
- * Performance: response buffering captures every controller byte in
- * memory and re-emits it on commit, which is measurable for large or
- * streaming bodies. The filter therefore wraps only when at least one
- * handler is actually scheduled at the corresponding signal. The common
- * case (a permit decision with no HTTP signal handlers) runs against the
- * raw servlet request and response with no extra copy.
+ * Performance: response buffering captures every controller byte in memory and
+ * re-emits it on commit, which is
+ * measurable for large or streaming bodies. The filter therefore wraps only
+ * when at least one handler is actually
+ * scheduled at the corresponding signal. The common case (a permit decision
+ * with no HTTP signal handlers) runs against
+ * the raw servlet request and response with no extra copy.
  * <p>
- * Obligation handler failures throw {@link AccessDeniedException}, caught
- * by Spring's exception-translation filter and routed to the configured
- * access-denied handler. {@link HttpResponseSignal} fires only on the
- * normal-return path; if the chain throws, the buffer is discarded and
- * the exception propagates so the standard error pipeline can produce its
+ * Obligation handler failures throw {@link AccessDeniedException}, caught by
+ * Spring's exception-translation filter and
+ * routed to the configured access-denied handler. {@link HttpResponseSignal}
+ * fires only on the normal-return path. If
+ * the chain throws, the buffer is discarded and the exception propagates so the
+ * standard error pipeline can produce its
  * own response.
  */
 public class SaplHttpPepFilter extends OncePerRequestFilter {
 
     private static final String ERROR_REQUEST_MUTATION_OBLIGATION_FAILED = "Access Denied. An HTTP request-mutation obligation handler failed.";
     private static final String ERROR_RESPONSE_OBLIGATION_FAILED         = "Access Denied. An HTTP response obligation handler failed.";
+    private static final String MUTABLE_RESPONSE_ATTRIBUTE               = SaplHttpPepFilter.class.getName()
+            + ".MUTABLE_RESPONSE";
+
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        // The controller body of an async endpoint is produced on the ASYNC dispatch.
+        // The filter must run there to capture it and fire the response signal.
+        return false;
+    }
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
@@ -93,8 +108,12 @@ public class SaplHttpPepFilter extends OncePerRequestFilter {
             return;
         }
 
+        // On an ASYNC dispatch the controller already ran on the initial dispatch, so
+        // request mutation is not redone.
+        val initialDispatch = request.getDispatcherType() != DispatcherType.ASYNC;
+
         ServletRequest forwardedRequest = request;
-        if (requestHandlersScheduled) {
+        if (initialDispatch && requestHandlersScheduled) {
             val mutableRequest = new ServletMutableHttpRequest(request);
             if (plan.execute(HttpRequestMutationSignal.of(mutableRequest), false).failureState()) {
                 throw new AccessDeniedException(ERROR_REQUEST_MUTATION_OBLIGATION_FAILED);
@@ -109,12 +128,30 @@ public class SaplHttpPepFilter extends OncePerRequestFilter {
             return;
         }
 
-        val mutableResponse = new ServletMutableHttpResponse(response);
+        val mutableResponse = mutableResponseFor(request, response);
         chain.doFilter(forwardedRequest, mutableResponse);
+        if (request.isAsyncStarted()) {
+            // The body arrives on the ASYNC dispatch. Defer the response signal and commit
+            // to that dispatch.
+            return;
+        }
 
         if (plan.execute(HttpResponseSignal.of(mutableResponse), false).failureState()) {
             throw new AccessDeniedException(ERROR_RESPONSE_OBLIGATION_FAILED);
         }
         mutableResponse.commit();
+    }
+
+    private static ServletMutableHttpResponse mutableResponseFor(HttpServletRequest request,
+            HttpServletResponse response) {
+        if (response instanceof ServletMutableHttpResponse alreadyWrapped) {
+            return alreadyWrapped;
+        }
+        if (request.getAttribute(MUTABLE_RESPONSE_ATTRIBUTE) instanceof ServletMutableHttpResponse stored) {
+            return stored;
+        }
+        val created = new ServletMutableHttpResponse(response);
+        request.setAttribute(MUTABLE_RESPONSE_ATTRIBUTE, created);
+        return created;
     }
 }

@@ -18,6 +18,7 @@
 package io.sapl.attributes.broker.pip;
 
 import io.sapl.api.attributes.AttributeFinderInvocation;
+import io.sapl.api.model.AttributeSnapshot;
 import io.sapl.api.model.Value;
 import io.sapl.attributes.broker.AttributeRepository;
 import io.sapl.attributes.broker.pip.PolicyInformationPointAttributeBroker.BrokerSubscription;
@@ -25,6 +26,8 @@ import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.jspecify.annotations.Nullable;
 
+import java.time.Duration;
+import java.time.InstantSource;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -34,20 +37,23 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
- * Active invocation fed by the broker's fallback repository, used
- * when no PIP in the catalog matches the invocation. Wraps an
- * {@link AttributeRepository#observe} registration on the fallback
+ * Active invocation fed by the broker's fallback repository, used when no PIP
+ * in the catalog matches the invocation.
+ * Wraps an {@link AttributeRepository#observe} registration on the fallback
  * (typically the
- * {@link io.sapl.attributes.broker.repository.InMemoryAttributeRepository})
- * and exposes the same {@link ActiveInvocation} contract as
- * {@link ActivePolicyInformationPointInvocation}, so the PIP broker
- * dispatches and tracks refcount uniformly across both kinds.
+ * {@link io.sapl.attributes.broker.repository.InMemoryAttributeRepository}) and
+ * exposes the same
+ * {@link ActiveInvocation} contract as
+ * {@link ActivePolicyInformationPointInvocation}, so the PIP broker dispatches
+ * and
+ * tracks refcount uniformly across both kinds.
  * <p>
- * If a PIP later becomes available for this invocation (catalog
- * load or swap), the broker migrates: close this active invocation
- * and replace it with an {@link ActivePolicyInformationPointInvocation}
- * fed by the PIP. Migration is handled by the broker; this class
- * itself is static during its lifetime.
+ * If a PIP later becomes available for this invocation (catalog load or swap),
+ * the broker migrates: close this active
+ * invocation and replace it with an
+ * {@link ActivePolicyInformationPointInvocation} fed by the PIP. Migration is
+ * handled
+ * by the broker. This class itself is static during its lifetime.
  */
 @Slf4j
 final class ActiveRepositoryInvocation implements ActiveInvocation {
@@ -55,37 +61,49 @@ final class ActiveRepositoryInvocation implements ActiveInvocation {
     private static final String DEBUG_CLOSED               = "Active repository invocation {} closed";
     private static final String DEBUG_FALLBACK_CLOSE_THREW = "Active repository invocation {} fallback close threw: {}";
     private static final String DEBUG_OPENED               = "Active repository invocation {} opened for '{}'";
-    private static final String WARN_ONVALUE_THREW         = "Active repository invocation {} onValue handler threw: {}";
+    private static final String ERROR_ONVALUE_THREW        = "Active repository invocation {} onValue handler threw (engine invariant: it must never throw): {}";
+
+    private static final long WARN_LOG_INTERVAL_NANOS = Duration.ofMinutes(1).toNanos();
 
     private static final AtomicLong NEXT_ID = new AtomicLong(Long.MIN_VALUE);
 
     private final long                      id = NEXT_ID.getAndIncrement();
     private final AttributeFinderInvocation invocation;
     private final AttributeRepository       fallback;
+    private final InstantSource             timestampSource;
     private final Consumer<Value>           onValue;
 
-    // The broker lock guards subscriberRefs + refcount; the AtomicInteger here
-    // is only to silence SonarQube's atomicity check on increment / decrement.
+    // Broker lock guards both subscriberRefs and refcount.
     private final Map<BrokerSubscription, Integer> subscriberRefs = new HashMap<>();
     private final AtomicInteger                    refcount       = new AtomicInteger();
 
-    private final Object                               lock        = new Object();
-    private AttributeRepository.@Nullable Registration handle      = null;
-    private volatile Optional<Value>                   latestValue = Optional.empty();
-    private volatile boolean                           closed      = false;
+    private final Object                               lock           = new Object();
+    private AttributeRepository.@Nullable Registration handle         = null;
+    private volatile Optional<AttributeSnapshot>       latestSnapshot = Optional.empty();
+    private volatile boolean                           closed         = false;
+
+    // Rate-limits the onValue-handler-threw warning to one per minute.
+    private long    lastWarnLogNanos;
+    private boolean warnLogged;
 
     /**
-     * @param invocation the normalized invocation this active
-     * invocation serves
-     * @param fallback the repository this active invocation observes
-     * @param onValue dispatched on every new value from the fallback
+     * @param invocation
+     * the normalized invocation this active invocation serves
+     * @param fallback
+     * the repository this active invocation observes
+     * @param timestampSource
+     * source for value-arrival timestamps
+     * @param onValue
+     * dispatched on every new value from the fallback
      */
     ActiveRepositoryInvocation(AttributeFinderInvocation invocation,
             AttributeRepository fallback,
+            InstantSource timestampSource,
             Consumer<Value> onValue) {
-        this.invocation = invocation;
-        this.fallback   = fallback;
-        this.onValue    = onValue;
+        this.invocation      = invocation;
+        this.fallback        = fallback;
+        this.timestampSource = timestampSource;
+        this.onValue         = onValue;
         log.debug(DEBUG_OPENED, id, invocation.attributeName());
     }
 
@@ -105,8 +123,8 @@ final class ActiveRepositoryInvocation implements ActiveInvocation {
     }
 
     @Override
-    public Optional<Value> snapshot() {
-        return latestValue;
+    public Optional<AttributeSnapshot> snapshot() {
+        return latestSnapshot;
     }
 
     @Override
@@ -145,9 +163,10 @@ final class ActiveRepositoryInvocation implements ActiveInvocation {
     }
 
     /**
-     * Registers an observation on the fallback. The fallback delivers
-     * the current value synchronously, which {@link #onUpdate} stores
-     * in the mailbox and dispatches via {@code onValue}. Idempotent.
+     * Registers an observation on the fallback. The fallback delivers the current
+     * value synchronously, which
+     * {@link #onUpdate} stores in the mailbox and dispatches via {@code onValue}.
+     * Idempotent.
      */
     @Override
     public void start() {
@@ -187,11 +206,20 @@ final class ActiveRepositoryInvocation implements ActiveInvocation {
         if (closed) {
             return;
         }
-        latestValue = Optional.of(value);
+        latestSnapshot = Optional.of(new AttributeSnapshot(value, timestampSource.instant()));
         try {
             onValue.accept(value);
         } catch (RuntimeException e) {
-            log.warn(WARN_ONVALUE_THREW, id, e.getMessage(), e);
+            logHandlerFailure(e);
+        }
+    }
+
+    private void logHandlerFailure(RuntimeException failure) {
+        val now = System.nanoTime();
+        if (!warnLogged || now - lastWarnLogNanos >= WARN_LOG_INTERVAL_NANOS) {
+            log.error(ERROR_ONVALUE_THREW, id, failure.getMessage(), failure);
+            lastWarnLogNanos = now;
+            warnLogged       = true;
         }
     }
 

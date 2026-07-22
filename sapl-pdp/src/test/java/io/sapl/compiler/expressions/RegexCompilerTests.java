@@ -70,6 +70,16 @@ class RegexCompilerTests {
         assertCompilesToError("\"hello\" =~ 123", "Regular expression must be a string");
     }
 
+    @Test
+    @org.junit.jupiter.api.Timeout(15)
+    @DisplayName("a catastrophically backtracking pattern aborts within the budget instead of hanging")
+    void whenCatastrophicBacktrackingThenReturnsTimeoutError() {
+        // Catastrophic backtracking that would hang the thread must be aborted by the
+        // bounded matcher as an ErrorValue.
+        var input = "1,".repeat(30);
+        assertCompilesToError("\"" + input + "\" =~ \"(.*,){30}P\"", "time budget");
+    }
+
     @MethodSource
     @ParameterizedTest(name = "{0}")
     void whenRegexExpressionThenHasExpectedStratum(String description, String expression, Stratum expected) {
@@ -124,11 +134,10 @@ class RegexCompilerTests {
         var compiled = compileExpression("subject =~ \"^a.*\"");
         assertThat(compiled).isInstanceOf(RegexCompiler.RegexPrecompiledPure.class);
         var precompiled = (RegexCompiler.RegexPrecompiledPure) compiled;
-        // Matcher Predicate is captured at compile time; same reference reused per
-        // evaluate call.
-        assertThat(precompiled.matcher()).isNotNull().isSameAs(precompiled.matcher())
-                .satisfies(m -> assertThat(m.test("apple")).isTrue())
-                .satisfies(m -> assertThat(m.test("banana")).isFalse());
+        // Pattern is compiled at compile time. Same reference reused per evaluate call.
+        assertThat(precompiled.pattern()).isNotNull().isSameAs(precompiled.pattern())
+                .satisfies(p -> assertThat(p.matcher("apple").matches()).isTrue())
+                .satisfies(p -> assertThat(p.matcher("banana").matches()).isFalse());
         assertThat(precompiled.patternSource()).isEqualTo("^a.*");
     }
 
@@ -138,9 +147,9 @@ class RegexCompilerTests {
         var compiled = compileExpression("subject.<test.name> =~ \"^a.*\"");
         assertThat(compiled).isInstanceOf(RegexCompiler.RegexPrecompiledStream.class);
         var precompiled = (RegexCompiler.RegexPrecompiledStream) compiled;
-        assertThat(precompiled.matcher()).isNotNull().isSameAs(precompiled.matcher())
-                .satisfies(m -> assertThat(m.test("apple")).isTrue())
-                .satisfies(m -> assertThat(m.test("banana")).isFalse());
+        assertThat(precompiled.pattern()).isNotNull().isSameAs(precompiled.pattern())
+                .satisfies(p -> assertThat(p.matcher("apple").matches()).isTrue())
+                .satisfies(p -> assertThat(p.matcher("banana").matches()).isFalse());
     }
 
 }

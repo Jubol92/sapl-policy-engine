@@ -34,8 +34,11 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.stream.Stream;
 
@@ -45,6 +48,8 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @DisplayName("PDPConfigurationLoader")
 class PDPConfigurationLoaderTests {
+
+    private static final long MAX_PDP_JSON_BYTES = 1024L * 1024L * 1024L;
 
     @TempDir
     Path tempDir;
@@ -57,6 +62,18 @@ class PDPConfigurationLoaderTests {
         assertThat(config.configurationId()).isEqualTo("default");
         assertThat(config.data().variables()).isEmpty();
         assertThat(config.data().secrets()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an explicit null algorithm degrades gracefully to the default, like an absent field (run2-078)")
+    void whenLoadingWithExplicitNullAlgorithmThenFallsBackToDefault() throws IOException {
+        Files.writeString(tempDir.resolve("pdp.json"), """
+                {"algorithm": null}
+                """);
+
+        val config = PDPConfigurationLoader.loadFromDirectory(tempDir, "test-pdp");
+
+        assertThat(config.combiningAlgorithm()).isEqualTo(CombiningAlgorithm.DEFAULT);
     }
 
     @Test
@@ -175,6 +192,19 @@ class PDPConfigurationLoaderTests {
     }
 
     @Test
+    @DisplayName("a directory pdp.json larger than one GiB is rejected before parsing")
+    void whenDirectoryPdpJsonExceedsMaximumSizeThenFailsBeforeParsing() throws IOException {
+        val pdpJson = tempDir.resolve("pdp.json");
+        try (val channel = FileChannel.open(pdpJson, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+            channel.position(MAX_PDP_JSON_BYTES);
+            channel.write(ByteBuffer.wrap(new byte[] { '\n' }));
+        }
+
+        assertThatThrownBy(() -> PDPConfigurationLoader.loadFromDirectory(tempDir, "test-pdp"))
+                .isInstanceOf(PDPConfigurationException.class).hasMessageContaining("pdp.json exceeds maximum size");
+    }
+
+    @Test
     void whenLoadingWithFirstAlgorithmThenThrowsException() throws IOException {
         Files.writeString(tempDir.resolve("pdp.json"), """
                 {"algorithm": { "votingMode": "FIRST", "defaultDecision": "PERMIT", "errorHandling": "PROPAGATE" }}
@@ -248,7 +278,44 @@ class PDPConfigurationLoaderTests {
         assertThat(config.combiningAlgorithm()).isEqualTo(
                 new CombiningAlgorithm(VotingMode.PRIORITY_PERMIT, DefaultDecision.PERMIT, ErrorHandling.ABSTAIN));
         assertThat(config.data().variables()).isEmpty();
-        assertThat(config.configurationId()).startsWith("res:").contains("@sha256:");
+        assertThat(config.configurationId()).isEqualTo("res:/policies/test");
+    }
+
+    @Test
+    void whenBundleContainsMorePoliciesThanConfiguredMaximumThenThrowsException() {
+        val pdpJson       = """
+                {
+                  "configurationId": "bundle-v1",
+                  "compilerOptions": { "maxPolicyDocuments": 1 }
+                }
+                """;
+        val saplDocuments = Map.of("one.sapl", "policy \"one\" permit", "two.sapl", "policy \"two\" permit");
+
+        assertThatThrownBy(() -> PDPConfigurationLoader.loadFromBundle(pdpJson, saplDocuments, "test-pdp"))
+                .isInstanceOf(PDPConfigurationException.class).hasMessageContaining("File count exceeds maximum");
+    }
+
+    @Test
+    void whenAutoGeneratingResourceIdThenItIsPlainPathWithoutContentHash() {
+        val config = PDPConfigurationLoader.loadFromContent("""
+                { "algorithm": { "votingMode": "UNIQUE", "defaultDecision": "DENY", "errorHandling": "ABSTAIN" } }
+                """, Map.of("test.sapl", "policy \"test\" permit"), "test-pdp", "/policies/arkham");
+
+        assertThat(config.configurationId()).isEqualTo("res:/policies/arkham").doesNotContain("sha256");
+    }
+
+    @Test
+    void whenTwoResourceConfigsDifferOnlyInVariablesThenAutoIdDoesNotPretendIntegrity() {
+        val saplDocuments = Map.of("test.sapl", "policy \"test\" permit");
+        val benign        = PDPConfigurationLoader.loadFromContent("""
+                { "variables": { "cultName": "benign" } }
+                """, saplDocuments, "test-pdp", "/policies/cult");
+        val malicious     = PDPConfigurationLoader.loadFromContent("""
+                { "variables": { "cultName": "malicious" } }
+                """, saplDocuments, "test-pdp", "/policies/cult");
+
+        assertThat(benign.configurationId()).isEqualTo("res:/policies/cult").doesNotContain("sha256")
+                .isEqualTo(malicious.configurationId());
     }
 
     @Test

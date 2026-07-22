@@ -27,24 +27,29 @@ import lombok.NonNull;
  * Used internally to cache and pass annotation metadata to the authorization
  * subscription builder.
  *
- * @param annotationType the annotation class (e.g., PreEnforce.class)
- * @param subjectExpression SpEL expression for the subject, or null
- * @param actionExpression SpEL expression for the action, or null
- * @param resourceExpression SpEL expression for the resource, or null
- * @param environmentExpression SpEL expression for the environment, or null
- * @param secretsExpression SpEL expression for secrets, or null
- * @param signalTransitions whether suspend/resume boundary crossings
- * surface to the subscriber as non-terminal exceptions on the error
- * channel. Effective for {@link StreamEnforce}-derived attributes;
- * always {@code false} for {@link PreEnforce} / {@link PostEnforce}.
- * @param terminateOnItemEnforcementFailure whether per-item obligation
- * enforcement failure terminates the subscription instead of suspending.
- * Effective for {@link StreamEnforce}-derived attributes; always
- * {@code false} for one-shot PEPs.
- * @param pauseRapDuringSuspend whether the RAP subscription is disposed
- * while the PEP is in suspended state. Effective for
- * {@link StreamEnforce}-derived attributes; always {@code false} for
- * one-shot PEPs.
+ * @param annotationType
+ * the annotation class (e.g., PreEnforce.class)
+ * @param subjectExpression
+ * SpEL expression for the subject, or null
+ * @param actionExpression
+ * SpEL expression for the action, or null
+ * @param resourceExpression
+ * SpEL expression for the resource, or null
+ * @param environmentExpression
+ * SpEL expression for the environment, or null
+ * @param secretsExpression
+ * SpEL expression for secrets, or null
+ * @param signalTransitions
+ * whether suspend/resume boundary crossings surface to the subscriber as
+ * non-terminal exceptions on the
+ * error channel. Effective for {@link StreamEnforce}-derived attributes; always
+ * {@code false} for
+ * {@link PreEnforce} / {@link PostEnforce}.
+ * @param pauseRapDuringSuspend
+ * whether the RAP subscription is disposed while the PEP is in suspended state.
+ * Effective for
+ * {@link StreamEnforce}-derived attributes; always {@code false} for one-shot
+ * PEPs.
  */
 public record SaplAttribute(
         Class<?> annotationType,
@@ -54,14 +59,13 @@ public record SaplAttribute(
         Expression environmentExpression,
         Expression secretsExpression,
         boolean signalTransitions,
-        boolean terminateOnItemEnforcementFailure,
         boolean pauseRapDuringSuspend) {
 
     private static final String NO_SECRETS = "NO SECRETS";
     private static final String SECRETS_REDACTED = "SECRETS REDACTED";
 
     public static final SaplAttribute NULL_ATTRIBUTE = new SaplAttribute(null, null, null, null, null, null, false,
-            false, false);
+            false);
 
     @Override
     public @NonNull String toString() {
@@ -70,7 +74,6 @@ public record SaplAttribute(
                 + ", resource=" + expressionStringOrNull(resourceExpression()) + ", environment="
                 + expressionStringOrNull(environmentExpression()) + ", secrets=" + maskSecrets()
                 + (signalTransitions() ? ", signalTransitions=true" : "")
-                + (terminateOnItemEnforcementFailure() ? ", terminateOnItemEnforcementFailure=true" : "")
                 + (pauseRapDuringSuspend() ? ", pauseRapDuringSuspend=true" : "") + ")";
     }
 

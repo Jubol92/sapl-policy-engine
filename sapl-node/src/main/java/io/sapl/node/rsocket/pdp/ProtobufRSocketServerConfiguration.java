@@ -42,7 +42,7 @@ import lombok.val;
  * {@code sapl.pdp.rsocket.port} to override the port.
  * <p>
  * Connection lifetime is soft. JWT credentials are validated at the next
- * decision call; expired tokens are then rejected and clients reconnect with
+ * decision call. Expired tokens are then rejected and clients reconnect with
  * fresh credentials. There is no separate per-connection hard-disconnect
  * timer.
  * <p>
@@ -102,15 +102,17 @@ public class ProtobufRSocketServerConfiguration {
 
     @Bean
     ProtobufRSocketServerLifecycle protobufRSocketServer(@Value("${sapl.pdp.rsocket.enabled:true}") boolean enabled,
+            @Value("${sapl.pdp.rsocket.address:127.0.0.1}") String bindAddress,
             @Value("${sapl.pdp.rsocket.port:7000}") int port,
             @Value("${sapl.pdp.rsocket.socket-path:#{null}}") @Nullable String socketPath,
             @Value("${sapl.pdp.rsocket.max-inbound-payload-size:16777215}") int maxInboundPayloadSize,
+            @Value("${io.sapl.node.max-multi-subscription-count:256}") int maxMultiSubscriptionCount,
             @Value("${sapl.pdp.rsocket.ssl.bundle:#{null}}") @Nullable String sslBundleName,
             BlockingPolicyDecisionPoint blockingPdp, ReactivePolicyDecisionPoint pdp,
             ObjectProvider<RSocketConnectionAuthenticator> authenticator, ObjectProvider<SslBundles> sslBundles) {
         val sslContext = resolveSslContext(sslBundleName, sslBundles.getIfAvailable());
-        return new ProtobufRSocketServerLifecycle(enabled, port, socketPath, maxInboundPayloadSize, blockingPdp, pdp,
-                authenticator.getIfAvailable(), sslContext);
+        return new ProtobufRSocketServerLifecycle(enabled, bindAddress, port, socketPath, maxInboundPayloadSize,
+                maxMultiSubscriptionCount, blockingPdp, pdp, authenticator.getIfAvailable(), sslContext);
     }
 
     private static @Nullable SslContext resolveSslContext(@Nullable String bundleName,

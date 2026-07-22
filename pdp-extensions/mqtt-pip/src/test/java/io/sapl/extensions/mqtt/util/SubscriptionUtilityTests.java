@@ -23,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("SubscriptionUtility")
 class SubscriptionUtilityTests {
@@ -48,11 +49,57 @@ class SubscriptionUtilityTests {
     }
 
     @Test
+    @DisplayName("topic count over the configured limit is rejected")
+    void whenTopicCountExceedsLimitThenThrows() {
+        val topics = Value.ofArray(Value.of("sensors/temperature"), Value.of("sensors/humidity"));
+
+        assertThatThrownBy(() -> SubscriptionUtility.topicFilters(topics, 1, 1024L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("count");
+    }
+
+    @Test
+    @DisplayName("topic byte length over the configured limit is rejected")
+    void whenTopicBytesExceedLimitThenThrows() {
+        val topic = Value.of("sensors/temperature");
+
+        assertThatThrownBy(() -> SubscriptionUtility.topicFilters(topic, 1, 4L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("bytes");
+    }
+
+    @Test
+    @DisplayName("non-positive topic filter limits are rejected")
+    void whenTopicLimitsAreNonPositiveThenThrows() {
+        val topic = Value.of("sensors/temperature");
+
+        assertThatThrownBy(() -> SubscriptionUtility.topicFilters(topic, 0, 1024L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxTopicFilters");
+        assertThatThrownBy(() -> SubscriptionUtility.topicFilters(topic, 1, 0L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxTopicFilterBytes");
+    }
+
+    @Test
     @DisplayName("MQTT wildcard syntax is preserved in the filter")
     void whenWildcardTopicThenWildcardPreserved() {
         val filters = SubscriptionUtility.topicFilters(Value.of("building/+/temperature"));
 
         assertThat(filters).hasSize(1);
         assertThat(filters.getFirst().toString()).isEqualTo("building/+/temperature");
+    }
+
+    @Test
+    @DisplayName("a non-text topic is rejected with a domain error, not a class cast")
+    void whenTopicIsNotTextThenThrows() {
+        val notText = Value.of(5);
+
+        assertThatThrownBy(() -> SubscriptionUtility.topicFilters(notText))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("a non-text array element is rejected with a domain error, not a class cast")
+    void whenArrayElementIsNotTextThenThrows() {
+        val topics = Value.ofArray(Value.of("sensors/temperature"), Value.of(7));
+
+        assertThatThrownBy(() -> SubscriptionUtility.topicFilters(topics)).isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -20,7 +20,7 @@ package io.sapl.pip.geo.traccar;
 import io.sapl.api.model.ErrorValue;
 import io.sapl.api.model.ObjectValue;
 import io.sapl.api.model.Value;
-import io.sapl.api.stream.BlockingWebClient;
+import io.sapl.attributes.http.BlockingWebClient;
 import io.sapl.api.stream.Streams;
 import io.sapl.api.test.stream.StreamAssertions;
 import lombok.val;
@@ -43,7 +43,8 @@ class TraccarSecretsTests {
 
     private static final ObjectValue BASE_CONFIG = (ObjectValue) json("""
             {
-                "baseUrl": "http://localhost:8082"
+                "baseUrl": "http://localhost:8082",
+                "allowInsecureHttp": true
             }
             """);
 
@@ -136,6 +137,7 @@ class TraccarSecretsTests {
         val configWithCreds = (ObjectValue) json("""
                 {
                     "baseUrl": "http://localhost:8082",
+                    "allowInsecureHttp": true,
                     "userName": "user@example.com",
                     "password": "secret"
                 }

@@ -25,14 +25,13 @@ import io.sapl.api.model.ObjectValue;
 import io.sapl.api.stream.Stream;
 import io.sapl.api.model.TextValue;
 import io.sapl.api.model.Value;
-import io.sapl.api.stream.BlockingWebClient;
+import io.sapl.attributes.http.BlockingWebClient;
 import lombok.RequiredArgsConstructor;
 import lombok.val;
-import tools.jackson.databind.node.JsonNodeFactory;
-import tools.jackson.databind.node.ObjectNode;
 
-import static io.sapl.api.model.ValueJsonMarshaller.fromJsonNode;
-import static io.sapl.api.model.ValueJsonMarshaller.toJsonNode;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 
 @RequiredArgsConstructor
 @PolicyInformationPoint(name = "http", description = HttpPolicyInformationPoint.DESCRIPTION, pipDocumentation = HttpPolicyInformationPoint.DOCUMENTATION)
@@ -70,12 +69,16 @@ public class HttpPolicyInformationPoint {
             | `body` | any | (none) | The request body. |
             | `accept` | text | `"application/json"` | Accepted response media type. |
             | `contentType` | text | `"application/json"` | Media type of the request body. |
-            | `pollingIntervalMs` | number | `1000` | Milliseconds between polling requests. |
-            | `repetitions` | number | `Long.MAX_VALUE` | Upper bound for repeated requests. |
+            | `maxResponseBytes` | number | `1048576` | Maximum response body, SSE event, or WebSocket message size in bytes; an oversized payload fails closed to an error value. |
             | `secretsKey` | text | (none) | Selects a named credential set from secrets (see below). |
 
             The `secretsKey` field is metadata for credential selection and is stripped before
             the HTTP request is sent.
+
+            Polling cadence is not a request setting. Each call issues one request and emits one
+            value; the engine re-evaluates the attribute on its own schedule via the
+            `pollIntervalMs` attribute option (see Functions and Attributes), uniformly with every
+            streaming attribute.
 
             ## Secrets Configuration
 
@@ -163,10 +166,23 @@ public class HttpPolicyInformationPoint {
             endpoints result in an error value.
             """;
 
-    private static final JsonNodeFactory JSON            = JsonNodeFactory.instance;
-    private static final String          SECRETS_HEADERS = "headers";
-    private static final String          SECRETS_HTTP    = "http";
-    private static final String          SECRETS_KEY     = "secretsKey";
+    private static final String SECRETS_HEADERS = "headers";
+    private static final String SECRETS_HTTP    = "http";
+    private static final String SECRETS_KEY     = "secretsKey";
+
+    /**
+     * The credential selection requested by {@code requestSettings.secretsKey}.
+     * Distinguishes an absent key (flat default fallback) from a
+     * present-but-not-text
+     * key (specified-but-unresolvable, fail closed) from a named key.
+     */
+    private sealed interface SecretsKeySelection {
+        record Absent() implements SecretsKeySelection {}
+
+        record Malformed() implements SecretsKeySelection {}
+
+        record Named(String name) implements SecretsKeySelection {}
+    }
 
     private final BlockingWebClient webClient;
 
@@ -192,8 +208,11 @@ public class HttpPolicyInformationPoint {
                                 "baseUrl": "https://example.com",
                                 "path": "/status"
                             };
-              <http.get(request)>.status == "OK";
+              <http.get(request)[{pollIntervalMs: 1000}]>.status == "OK";
             ```
+            The `[{pollIntervalMs: 1000}]` attribute option sets how often the engine
+            re-evaluates the attribute (re-issues the request); it is optional and
+            defaults to the engine-wide attribute poll interval.
             """)
     public Stream<Value> get(AttributeAccessContext ctx, ObjectValue requestSettings) {
         return webClient.httpRequest("GET", mergeHeaders(ctx, requestSettings));
@@ -622,15 +641,17 @@ public class HttpPolicyInformationPoint {
             return stripSecretsKey(requestSettings);
         }
 
-        val merged = JSON.objectNode();
-        if (!subscriptionHeaders.isEmpty()) {
-            merged.setAll((ObjectNode) toJsonNode(subscriptionHeaders));
-        }
-        if (!policyHeaders.isEmpty()) {
-            merged.setAll((ObjectNode) toJsonNode(policyHeaders));
-        }
-        if (!pdpHeaders.isEmpty()) {
-            merged.setAll((ObjectNode) toJsonNode(pdpHeaders));
+        // HTTP header names are case-insensitive, so a higher-priority source must
+        // overwrite a lower-priority one even when the names differ only in case.
+        // Canonicalize on lower case while keeping the winning source's exact name.
+        val merged = new LinkedHashMap<String, Map.Entry<String, Value>>();
+        applyHeaders(merged, subscriptionHeaders);
+        applyHeaders(merged, policyHeaders);
+        applyHeaders(merged, pdpHeaders);
+
+        val headers = ObjectValue.builder();
+        for (val entry : merged.values()) {
+            headers.put(entry.getKey(), entry.getValue());
         }
 
         val builder = ObjectValue.builder();
@@ -639,12 +660,18 @@ public class HttpPolicyInformationPoint {
                 builder.put(entry.getKey(), entry.getValue());
             }
         }
-        builder.put(BlockingWebClient.HEADERS, fromJsonNode(merged));
+        builder.put(BlockingWebClient.HEADERS, headers.build());
         return builder.build();
     }
 
-    private static ObjectValue resolveHttpHeaders(ObjectValue secrets, String secretsKey) {
-        if (secrets == null || secrets.isEmpty()) {
+    private static void applyHeaders(LinkedHashMap<String, Map.Entry<String, Value>> merged, ObjectValue headers) {
+        for (val entry : headers.entrySet()) {
+            merged.put(entry.getKey().toLowerCase(Locale.ROOT), entry);
+        }
+    }
+
+    private static ObjectValue resolveHttpHeaders(ObjectValue secrets, SecretsKeySelection secretsKey) {
+        if (secrets == null || secrets.isEmpty() || secretsKey instanceof SecretsKeySelection.Malformed) {
             return Value.EMPTY_OBJECT;
         }
         val httpValue = secrets.get(SECRETS_HTTP);
@@ -652,8 +679,8 @@ public class HttpPolicyInformationPoint {
             return Value.EMPTY_OBJECT;
         }
 
-        if (secretsKey != null) {
-            val namedValue = httpObj.get(secretsKey);
+        if (secretsKey instanceof SecretsKeySelection.Named(var name)) {
+            val namedValue = httpObj.get(name);
             if (namedValue instanceof ObjectValue namedObj) {
                 val h = namedObj.get(SECRETS_HEADERS);
                 return h instanceof ObjectValue hObj && !hObj.isEmpty() ? hObj : Value.EMPTY_OBJECT;
@@ -665,12 +692,12 @@ public class HttpPolicyInformationPoint {
         return h instanceof ObjectValue hObj && !hObj.isEmpty() ? hObj : Value.EMPTY_OBJECT;
     }
 
-    private static String extractSecretsKey(ObjectValue requestSettings) {
+    private static SecretsKeySelection extractSecretsKey(ObjectValue requestSettings) {
         if (!requestSettings.containsKey(SECRETS_KEY)) {
-            return null;
+            return new SecretsKeySelection.Absent();
         }
         val v = requestSettings.get(SECRETS_KEY);
-        return v instanceof TextValue(var s) ? s : null;
+        return v instanceof TextValue(var s) ? new SecretsKeySelection.Named(s) : new SecretsKeySelection.Malformed();
     }
 
     private static ObjectValue extractPolicyHeaders(ObjectValue requestSettings) {

@@ -19,6 +19,7 @@ package io.sapl.spring.pep.http.servlet;
 
 import java.io.IOException;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.access.AccessDeniedHandlerImpl;
@@ -34,15 +35,17 @@ import lombok.val;
 
 /**
  * Servlet {@link AccessDeniedHandler} that fires {@link HttpDenialSignal}
- * against the {@link EnforcementPlan} published by
- * {@link SaplAuthorizationManager} so policy obligations can shape the deny
- * response (status, headers, body, redirect).
+ * against the {@link EnforcementPlan} published
+ * by {@link SaplAuthorizationManager} so policy obligations can shape the deny
+ * response (status, headers, body,
+ * redirect).
  * <p>
  * Falls back to Spring Security's default 403 behaviour when no plan is
- * present, when no handler claims the denial (no entries scheduled at the
- * denial signal, or the registered handlers leave the buffered response
- * untouched), or when an obligation handler fails. Otherwise the buffered
- * response shaped by the handlers is committed to the client.
+ * present, when no handler claims the denial (no
+ * entries scheduled at the denial signal, or the registered handlers leave the
+ * buffered response untouched), or when an
+ * obligation handler fails. Otherwise the buffered response shaped by the
+ * handlers is committed to the client.
  */
 public class SaplAccessDeniedHandler implements AccessDeniedHandler {
 
@@ -62,6 +65,10 @@ public class SaplAccessDeniedHandler implements AccessDeniedHandler {
         if (result.failureState() || !mutableResponse.isModified()) {
             fallback.handle(request, response, denied);
             return;
+        }
+        val shapedStatus = mutableResponse.getStatusCode();
+        if (!shapedStatus.isError() && !shapedStatus.is3xxRedirection()) {
+            mutableResponse.setStatusCode(HttpStatus.FORBIDDEN);
         }
         mutableResponse.commit();
     }

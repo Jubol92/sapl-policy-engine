@@ -28,10 +28,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,14 +58,71 @@ class InMemoryAttributeRepositoryTests {
         repository.close();
     }
 
+    private static final String TEST_PDP_ID = "test-pdp";
+
     private static AttributeFinderInvocation invocation(String fqn) {
-        return new AttributeFinderInvocation("default", fqn, List.of(), Duration.ofSeconds(1), Duration.ofMillis(100),
-                Duration.ofMillis(100), 0L, false,
+        return invocation(fqn, TEST_PDP_ID);
+    }
+
+    private static AttributeFinderInvocation invocation(String fqn, String pdpId) {
+        return new AttributeFinderInvocation(pdpId, "default", fqn, List.of(), Duration.ofSeconds(1),
+                Duration.ofMillis(100), Duration.ofMillis(100), 0L, false,
                 new AttributeAccessContext(Value.EMPTY_OBJECT, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT));
     }
 
     private static RepositoryKey repoKey(String fqn) {
-        return new RepositoryKey(null, fqn, List.of());
+        return new RepositoryKey(null, fqn, List.of(), TEST_PDP_ID);
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("the same attribute observed by two different pdpIds maps to distinct repository keys (tenant isolation)")
+    void whenSameAttributeDifferentPdpIdThenDistinctRepositoryKeys() {
+        val keyTenantA = RepositoryKey.fromInvocation(invocation("env.shared", "tenant-a"));
+        val keyTenantB = RepositoryKey.fromInvocation(invocation("env.shared", "tenant-b"));
+
+        assertThat(keyTenantA).isNotEqualTo(keyTenantB);
+    }
+
+    @Test
+    @Timeout(30)
+    @DisplayName("concurrent same-key publishes never leave an observer on a stale value")
+    void whenConcurrentPublishesThenObserverConvergesToRepositoryState() throws InterruptedException {
+        for (int round = 0; round < 300; round++) {
+            try (val repo = new InMemoryAttributeRepository()) {
+                val observed = new AtomicReference<Value>();
+                // A read-park-write consumer widens the delivery window, so a stale racing
+                // delivery would clobber the latest value.
+                repo.observe(invocation("env.race"), value -> {
+                    observed.get();
+                    LockSupport.parkNanos(1_000);
+                    observed.set(value);
+                });
+                val barrier = new CyclicBarrier(2);
+                val writerA = Thread.ofVirtual().unstarted(publisher(repo, barrier, Value.of(1)));
+                val writerB = Thread.ofVirtual().unstarted(publisher(repo, barrier, Value.of(2)));
+                writerA.start();
+                writerB.start();
+                writerA.join();
+                writerB.join();
+                // A fresh observer reads the settled state, which the racing observer must have
+                // converged to.
+                val authoritative = new AtomicReference<Value>();
+                repo.observe(invocation("env.race"), authoritative::set);
+                assertThat(observed.get()).as("round %d", round).isEqualTo(authoritative.get());
+            }
+        }
+    }
+
+    private static Runnable publisher(InMemoryAttributeRepository repo, CyclicBarrier barrier, Value value) {
+        return () -> {
+            try {
+                barrier.await();
+            } catch (InterruptedException | BrokenBarrierException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            repo.publish(repoKey("env.race"), value);
+        };
     }
 
     private static final class Recorder implements Consumer<Value> {
@@ -279,6 +341,7 @@ class InMemoryAttributeRepositoryTests {
     class WhenSlowObserverInFlight {
 
         @Test
+        @Timeout(5)
         @DisplayName("then a TTL expiry on an unrelated key fires its own observer concurrently "
                 + "rather than queuing behind the slow callback")
         void thenTtlExpiryOnUnrelatedKeyFiresWhileSlowConsumerStillRunning() throws Exception {
@@ -288,6 +351,14 @@ class InMemoryAttributeRepositoryTests {
             val slowObserver = new Consumer<Value>() {
                                  @Override
                                  public void accept(Value value) {
+                                     // The synchronous initial UNDEFINED delivery happens on the
+                                     // main thread inside observe(...). Blocking on it would park the
+                                     // main thread, so the concurrent scenario could never be set up.
+                                     // Only the real "trigger" value, delivered from the separate
+                                     // virtual thread below, parks the slow callback.
+                                     if (Value.UNDEFINED.equals(value)) {
+                                         return;
+                                     }
                                      slowEntered.countDown();
                                      try {
                                          unblockSlow.await(5, java.util.concurrent.TimeUnit.SECONDS);
@@ -296,11 +367,16 @@ class InMemoryAttributeRepositoryTests {
                                      }
                                  }
                              };
+            val ttlValueSeen = new java.util.concurrent.atomic.AtomicBoolean(false);
             val fastObserver = new Consumer<Value>() {
                                  @Override
                                  public void accept(Value value) {
-                                     if (Value.UNDEFINED.equals(value)) {
-                                         // TTL expiry path delivers UNDEFINED to the observer.
+                                     if (!Value.UNDEFINED.equals(value)) {
+                                         // The published value precedes the expiry UNDEFINED.
+                                         ttlValueSeen.set(true);
+                                     } else if (ttlValueSeen.get()) {
+                                         // Only the expiry UNDEFINED (after the published value)
+                                         // counts, not the initial registration UNDEFINED.
                                          ttlObserved.countDown();
                                      }
                                  }
@@ -317,7 +393,7 @@ class InMemoryAttributeRepositoryTests {
                         .as("slow observer must be entered before we test TTL on unrelated key").isTrue();
 
                 // Publish to the unrelated key with a short TTL. Expiry fires
-                // on the scheduler thread; the slow observer is still parked
+                // on the scheduler thread. The slow observer is still parked
                 // in its accept(...) call right now.
                 repository.publish(repoKey("env.ttl"), Value.of("with-ttl"), Duration.ofMillis(50));
 

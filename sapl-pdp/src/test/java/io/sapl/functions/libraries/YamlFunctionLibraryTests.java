@@ -221,4 +221,44 @@ class YamlFunctionLibraryTests {
         assertThat(investigator).containsEntry("name", Value.of("Carter")).containsEntry("sanity", Value.of(77));
         assertThat((ArrayValue) investigator.get("artifacts")).hasSize(2);
     }
+
+    @Test
+    void whenErrorValueToYamlThenReturnsErrorWithoutThrowing() {
+        val errorValue = Value.error("a hostile attribute produced an error");
+
+        assertThatCode(() -> {
+            val result = YamlFunctionLibrary.valToYaml(errorValue);
+            assertThat(result).isInstanceOf(ErrorValue.class);
+        }).doesNotThrowAnyException();
+    }
+
+    @Test
+    void whenUndefinedValueToYamlThenReturnsErrorWithoutThrowing() {
+        assertThatCode(() -> {
+            val result = YamlFunctionLibrary.valToYaml(Value.UNDEFINED);
+            assertThat(result).isInstanceOf(ErrorValue.class);
+        }).doesNotThrowAnyException();
+    }
+
+    @Test
+    void whenSerializedOutputExceedsMaximumThenReturnsError() {
+        val object = ObjectValue.builder().put("payload", oversizedOutputText()).build();
+
+        val result = YamlFunctionLibrary.valToYaml(object);
+
+        assertThat(result).isInstanceOfSatisfying(ErrorValue.class,
+                error -> assertThat(error.message()).contains("Output exceeds the maximum length"));
+    }
+
+    @Test
+    void whenYamlExceedsMaxInputThenError() {
+        val result = YamlFunctionLibrary.yamlToVal(Value.of("a".repeat(1024 * 1024 + 1)));
+
+        assertThat(result).isInstanceOf(ErrorValue.class);
+        assertThat(((ErrorValue) result).message()).contains("exceeds");
+    }
+
+    private static Value oversizedOutputText() {
+        return Value.of("a".repeat(TextOutputLimits.MAX_OUTPUT_CHARS));
+    }
 }

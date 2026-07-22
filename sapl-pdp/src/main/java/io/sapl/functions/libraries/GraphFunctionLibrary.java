@@ -20,12 +20,14 @@ package io.sapl.functions.libraries;
 import io.sapl.api.functions.Function;
 import io.sapl.api.functions.FunctionLibrary;
 import io.sapl.api.model.ArrayValue;
+import io.sapl.api.model.ErrorValue;
 import io.sapl.api.model.ObjectValue;
 import io.sapl.api.model.TextValue;
 import io.sapl.api.model.Value;
 import lombok.val;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * Graph utilities for reachability, transitive closure, and shortest paths.
@@ -37,8 +39,8 @@ import java.util.*;
  * "attributes": { ... } } }}</li>
  * </ul>
  * Transitive closure uses Tarjan's SCC decomposition (1972) + memoized DAG
- * closure. O(V + E + S) where S = total output size. Functions fold at compile
- * time when the input is a PDP variable.
+ * closure. O(V + E + S) where S = total output
+ * size. Functions fold at compile time when the input is a PDP variable.
  */
 @FunctionLibrary(name = GraphFunctionLibrary.NAME, description = GraphFunctionLibrary.DESCRIPTION, libraryDocumentation = GraphFunctionLibrary.DOCUMENTATION)
 public class GraphFunctionLibrary {
@@ -56,24 +58,49 @@ public class GraphFunctionLibrary {
 
             **Entity graph:** ``{ "admin": { "children": ["manager"], "attributes": { "permissions": ["approve"] } } }``
 
-            ## Compile-time optimization
+            ## Performance
 
-            When the graph is a PDP variable, transitive closure functions fold at compile time.
+            When the graph is a PDP configuration variable, a transitive-closure call is a constant
+            expression, so the compiler evaluates it once at compile time and reuses the result for
+            every decision instead of recomputing it per request. For a large graph, or a graph
+            supplied at runtime, use `reachable` (single-source) or `isReachable` (single-pair),
+            which do not materialize a closure.
+
+            ## Limits
+
+            The transitive closure functions are capped at 1000000 output entries and return an error
+            value above that. `transitiveClosureProjection` additionally caps flattened projected
+            attribute values at 1000000 across the whole returned object. These limits apply because
+            the input may originate from the authorization subscription or from policy information points,
+            which are not vetted to the same degree as the policies and variables shipped with the PDP
+            configuration.
             """;
 
-    private static final String NODE_ID_NULL          = "null";
-    private static final String SCHEMA_RETURNS_ARRAY  = """
+    private static final String NODE_ID_NULL           = "null";
+    private static final String SCHEMA_RETURNS_ARRAY   = """
             { "type": "array" }
             """;
-    private static final String SCHEMA_RETURNS_OBJECT = """
+    private static final String SCHEMA_RETURNS_OBJECT  = """
             { "type": "object" }
             """;
+    private static final String SCHEMA_RETURNS_BOOLEAN = """
+            { "type": "boolean" }
+            """;
+
+    private static final String ERROR_CLOSURE_TOO_LARGE    = "Transitive closure exceeds the maximum of %d entries.";
+    private static final String ERROR_PROJECTION_TOO_LARGE = "Transitive closure projection exceeds the maximum of %d projected values.";
+
+    private static final int MAX_CLOSURE_ENTRIES            = 1_000_000;
+    private static final int MAX_PROJECTED_ATTRIBUTE_VALUES = 1_000_000;
 
     /**
      * Single-source BFS reachability. O(V + E).
      *
-     * @param graph adjacency list
-     * @param initial root node(s) for BFS
+     * @param graph
+     * adjacency list
+     * @param initial
+     * root node(s) for BFS
+     *
      * @return array of reachable node IDs in discovery order
      */
     @Function(name = "reachable", docs = """
@@ -84,15 +111,34 @@ public class GraphFunctionLibrary {
         return toArrayValue(bfs(graph, initial, null, true));
     }
 
+    @Function(name = "isReachable", docs = """
+            ```graph.isReachable(OBJECT graph, STRING|ARRAY from, STRING to)```: Single-pair reachability.
+            Returns true if `to` is reachable from `from`, where a node reaches itself. The search stops
+            as soon as the target is found. O(V + E) worst case with constant output, and constant memory
+            beyond the visited set. Prefer this for a ReBAC check on a large graph instead of materializing
+            a full transitive closure.
+
+            ```sapl
+            graph.isReachable(rolesHierarchy, subject.role, "viewer");
+            ```
+            """, schema = SCHEMA_RETURNS_BOOLEAN)
+    public static Value isReachable(ObjectValue graph, Value from, Value to) {
+        return Value.of(reachesTarget(graph, from, null, nodeIdOf(to)));
+    }
+
     /**
      * All-pairs transitive closure (adjacency list). O(V + E + S).
      *
-     * @param graph adjacency list
+     * @param graph
+     * adjacency list
+     *
      * @return closure where each node maps to array of reachable nodes
      */
     @Function(name = "transitiveClosure", docs = """
             ```graph.transitiveClosure(OBJECT graph)```: All-pairs transitive closure via Tarjan's SCC
-            + memoized DAG closure. O(V + E + S).
+            + memoized DAG closure. O(V + E + S). Traversal is iterative, so deep graphs do not
+            cause a stack overflow. The output size S grows with reachability and can reach
+            O(V^2) for densely connected graphs.
 
             ```sapl
             var closed = graph.transitiveClosure(rolesHierarchy);
@@ -106,8 +152,11 @@ public class GraphFunctionLibrary {
     /**
      * All-pairs transitive closure (entity graph). O(V + E + S).
      *
-     * @param graph entity graph
-     * @param edgeKey field name for neighbor references
+     * @param graph
+     * entity graph
+     * @param edgeKey
+     * field name for neighbor references
+     *
      * @return closure where each node maps to array of reachable nodes
      */
     @Function(name = "transitiveClosure", docs = """
@@ -126,7 +175,9 @@ public class GraphFunctionLibrary {
     /**
      * All-pairs transitive closure with O(1) membership lookup. O(V + E + S).
      *
-     * @param graph adjacency list
+     * @param graph
+     * adjacency list
+     *
      * @return closure where each node maps to object with reachable nodes as keys
      */
     @Function(name = "transitiveClosureSet", docs = """
@@ -143,11 +194,14 @@ public class GraphFunctionLibrary {
     }
 
     /**
-     * All-pairs transitive closure with O(1) membership lookup (entity graph).
-     * O(V + E + S).
+     * All-pairs transitive closure with O(1) membership lookup (entity graph). O(V
+     * + E + S).
      *
-     * @param graph entity graph
-     * @param edgeKey field name for neighbor references
+     * @param graph
+     * entity graph
+     * @param edgeKey
+     * field name for neighbor references
+     *
      * @return closure where each node maps to object with reachable nodes as keys
      */
     @Function(name = "transitiveClosureSet", docs = """
@@ -166,9 +220,13 @@ public class GraphFunctionLibrary {
     /**
      * All-pairs transitive closure with attribute projection. O(V + E + S).
      *
-     * @param graph entity graph
-     * @param edgeKey field name for neighbor references
-     * @param attrKey field name within attributes to collect
+     * @param graph
+     * entity graph
+     * @param edgeKey
+     * field name for neighbor references
+     * @param attrKey
+     * field name within attributes to collect
+     *
      * @return closure where each node maps to collected attribute values
      */
     @Function(name = "transitiveClosureProjection", docs = """
@@ -182,11 +240,23 @@ public class GraphFunctionLibrary {
             ```
             """, schema = SCHEMA_RETURNS_OBJECT)
     public static Value transitiveClosureProjection(ObjectValue graph, TextValue edgeKey, TextValue attrKey) {
-        val closure = computeAllPairsClosure(graph, edgeKey.value());
-        val attr    = attrKey.value();
-        val result  = ObjectValue.builder();
+        final Map<String, Set<String>> closure;
+        try {
+            closure = computeAllPairsClosure(graph, edgeKey.value());
+        } catch (IllegalArgumentException e) {
+            return Value.error(e.getMessage());
+        }
+        val attr            = attrKey.value();
+        val result          = ObjectValue.builder();
+        var projectedValues = 0L;
         for (val entry : closure.entrySet()) {
-            result.put(entry.getKey(), collectAttribute(graph, entry.getValue(), attr));
+            val collectedAttribute = collectAttribute(graph, entry.getValue(), attr,
+                    MAX_PROJECTED_ATTRIBUTE_VALUES - projectedValues);
+            if (collectedAttribute instanceof ErrorValue error) {
+                return error;
+            }
+            projectedValues += ((ArrayValue) collectedAttribute).size();
+            result.put(entry.getKey(), collectedAttribute);
         }
         return result.build();
     }
@@ -194,13 +264,18 @@ public class GraphFunctionLibrary {
     /**
      * Single-source shortest paths via BFS. O(V + E).
      *
-     * @param graph adjacency list
-     * @param initial root node(s) for BFS
+     * @param graph
+     * adjacency list
+     * @param initial
+     * root node(s) for BFS
+     *
      * @return array of shortest paths from roots to all reachable nodes
      */
     @Function(name = "reachable_paths", docs = """
             ```graph.reachable_paths(OBJECT graph, STRING|ARRAY initial)```: Single-source shortest
-            paths via BFS. O(V + E). Returns array of paths (each an array of node IDs).
+            paths via BFS. O(V + E). Returns array of paths (each an array of node IDs). The total
+            emitted path steps are capped at 1000000 and an error value is returned above that, since
+            paths can grow to O(V^2) on a large or runtime-supplied graph.
             """, schema = SCHEMA_RETURNS_ARRAY)
     public static Value reachablePaths(ObjectValue graph, Value initial) {
         val visited      = new LinkedHashSet<String>();
@@ -220,10 +295,16 @@ public class GraphFunctionLibrary {
 
         val pathsBuilder = ArrayValue.builder();
         val steps        = new ArrayList<String>();
+        var emittedSteps = 0L;
         for (val nodeId : visited) {
             steps.clear();
             for (var c = nodeId; c != null; c = predecessors.get(c)) {
                 steps.add(c);
+            }
+            // Cap total path steps, they can grow O(V^2) on untrusted graphs.
+            emittedSteps += steps.size();
+            if (emittedSteps > MAX_CLOSURE_ENTRIES) {
+                return Value.error(ERROR_CLOSURE_TOO_LARGE.formatted(MAX_CLOSURE_ENTRIES));
             }
             val pathBuilder = ArrayValue.builder();
             for (val step : steps.reversed()) {
@@ -235,8 +316,8 @@ public class GraphFunctionLibrary {
     }
 
     /**
-     * Tarjan's SCC (1972) + condensation to DAG + bottom-up memoized closure.
-     * O(V + E + S) where S = total output size.
+     * Tarjan's SCC (1972) + condensation to DAG + bottom-up memoized closure. O(V +
+     * E + S) where S = total output size.
      */
     private static Map<String, Set<String>> computeAllPairsClosure(ObjectValue graph, String edgeKey) {
         val nodeIds    = new ArrayList<>(graph.keySet());
@@ -268,8 +349,9 @@ public class GraphFunctionLibrary {
     }
 
     /**
-     * Tarjan's SCC algorithm state. Encapsulates index, lowlink, stack, and
-     * counter to avoid passing 8 parameters through recursive DFS.
+     * Tarjan's SCC algorithm state. Encapsulates index, lowlink, stack, and counter
+     * to avoid passing 8 parameters
+     * through recursive DFS.
      */
     private static class TarjanState {
         private final Map<String, Integer> index       = new HashMap<>();
@@ -280,8 +362,8 @@ public class GraphFunctionLibrary {
         private int                        counter     = 0;
 
         /**
-         * Finds all SCCs via Tarjan's algorithm (1972). O(V + E). Returns SCCs
-         * in reverse topological order.
+         * Finds all SCCs via Tarjan's algorithm (1972). O(V + E). Returns SCCs in
+         * reverse topological order.
          */
         List<Set<String>> findSccs(List<String> nodeIds, Map<String, Set<String>> adjacency) {
             for (val nodeId : nodeIds) {
@@ -299,31 +381,69 @@ public class GraphFunctionLibrary {
             return sccs;
         }
 
-        private void dfs(String node, Map<String, Set<String>> adjacency) {
+        private void dfs(String startNode, Map<String, Set<String>> adjacency) {
+            val work = new ArrayDeque<Frame>();
+            visit(startNode);
+            work.push(new Frame(startNode, adjacency.getOrDefault(startNode, Set.of()).iterator()));
+
+            while (!work.isEmpty()) {
+                val frame     = work.peek();
+                val node      = frame.node;
+                var descended = false;
+
+                while (frame.neighbors.hasNext()) {
+                    val neighbor = frame.neighbors.next();
+                    if (!index.containsKey(neighbor)) {
+                        visit(neighbor);
+                        work.push(new Frame(neighbor, adjacency.getOrDefault(neighbor, Set.of()).iterator()));
+                        descended = true;
+                        break;
+                    } else if (activeInDfs.contains(neighbor)) {
+                        lowlink.put(node, Math.min(lowlink.get(node), index.get(neighbor)));
+                    }
+                }
+                if (descended) {
+                    continue;
+                }
+
+                if (lowlink.get(node).equals(index.get(node))) {
+                    collectScc(node);
+                }
+
+                work.pop();
+                val parent = work.peek();
+                if (parent != null) {
+                    lowlink.put(parent.node, Math.min(lowlink.get(parent.node), lowlink.get(node)));
+                }
+            }
+        }
+
+        private void visit(String node) {
             val idx = counter++;
             index.put(node, idx);
             lowlink.put(node, idx);
             stack.push(node);
             activeInDfs.add(node);
+        }
 
-            for (val neighbor : adjacency.getOrDefault(node, Set.of())) {
-                if (!index.containsKey(neighbor)) {
-                    dfs(neighbor, adjacency);
-                    lowlink.put(node, Math.min(lowlink.get(node), lowlink.get(neighbor)));
-                } else if (activeInDfs.contains(neighbor)) {
-                    lowlink.put(node, Math.min(lowlink.get(node), index.get(neighbor)));
-                }
-            }
+        private void collectScc(String root) {
+            val    scc = new HashSet<String>();
+            String w;
+            do {
+                w = stack.pop();
+                activeInDfs.remove(w);
+                scc.add(w);
+            } while (!w.equals(root));
+            sccs.add(scc);
+        }
 
-            if (lowlink.get(node).equals(index.get(node))) {
-                val    scc = new HashSet<String>();
-                String w;
-                do {
-                    w = stack.pop();
-                    activeInDfs.remove(w);
-                    scc.add(w);
-                } while (!w.equals(node));
-                sccs.add(scc);
+        private static final class Frame {
+            private final String           node;
+            private final Iterator<String> neighbors;
+
+            private Frame(String node, Iterator<String> neighbors) {
+                this.node      = node;
+                this.neighbors = neighbors;
             }
         }
     }
@@ -358,19 +478,52 @@ public class GraphFunctionLibrary {
 
     /**
      * Bottom-up memoized closure on the condensed DAG. Tarjan returns SCCs in
-     * reverse topological order, so forward iteration visits children before
-     * parents. O(S) where S = total output size.
+     * reverse topological order, so forward
+     * iteration visits children before parents. O(S) where S = total output size.
      */
     private static List<Set<String>> memoizedDagClosure(List<Set<String>> sccs, Map<Integer, Set<Integer>> dagAdj) {
-        val closures = new ArrayList<Set<String>>(sccs.size());
+        val closures      = new ArrayList<Set<String>>(sccs.size());
+        var outputEntries = 0L;
         for (var i = 0; i < sccs.size(); i++) {
             val reachable = new HashSet<>(sccs.get(i));
             for (val childScc : dagAdj.getOrDefault(i, Set.of())) {
                 reachable.addAll(closures.get(childScc));
             }
             closures.add(reachable);
+            // Bound the materialized output (sum over nodes of their reachable-set size)
+            // and
+            // abort before the quadratic blow-up allocates, rather than after.
+            outputEntries += (long) sccs.get(i).size() * reachable.size();
+            if (outputEntries > MAX_CLOSURE_ENTRIES) {
+                throw new IllegalArgumentException(ERROR_CLOSURE_TOO_LARGE.formatted(MAX_CLOSURE_ENTRIES));
+            }
         }
         return closures;
+    }
+
+    private static boolean reachesTarget(ObjectValue graph, Value from, String edgeKey, String target) {
+        val visited = new HashSet<String>();
+        val queue   = new ArrayDeque<String>();
+        seedQueue(from, visited, queue);
+        if (visited.contains(target)) {
+            return true;
+        }
+        while (!queue.isEmpty()) {
+            val current = queue.removeFirst();
+            val found   = new boolean[1];
+            forEachNeighbor(graph, current, edgeKey, neighbor -> {
+                if (visited.add(neighbor)) {
+                    queue.addLast(neighbor);
+                }
+                if (neighbor.equals(target)) {
+                    found[0] = true;
+                }
+            });
+            if (found[0]) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Set<String> bfs(ObjectValue graph, Value initial, String edgeKey, boolean ordered) {
@@ -388,8 +541,7 @@ public class GraphFunctionLibrary {
         return visited;
     }
 
-    private static void forEachNeighbor(ObjectValue graph, String nodeId, String edgeKey,
-            java.util.function.Consumer<String> consumer) {
+    private static void forEachNeighbor(ObjectValue graph, String nodeId, String edgeKey, Consumer<String> consumer) {
         val nodeValue = graph.get(nodeId);
         if (nodeValue == null) {
             return;
@@ -404,14 +556,22 @@ public class GraphFunctionLibrary {
         }
         if (edgesValue instanceof ArrayValue edgesArray) {
             for (val neighbor : edgesArray) {
+                if (neighbor == null || neighbor == Value.UNDEFINED || neighbor == Value.NULL) {
+                    continue;
+                }
                 consumer.accept(nodeIdOf(neighbor));
             }
         }
     }
 
     private static Value buildClosureArray(ObjectValue graph, String edgeKey) {
-        val closure = computeAllPairsClosure(graph, edgeKey);
-        val result  = ObjectValue.builder();
+        final Map<String, Set<String>> closure;
+        try {
+            closure = computeAllPairsClosure(graph, edgeKey);
+        } catch (IllegalArgumentException e) {
+            return Value.error(e.getMessage());
+        }
+        val result = ObjectValue.builder();
         for (val entry : graph.entrySet()) {
             result.put(entry.getKey(), toArrayValue(closure.getOrDefault(entry.getKey(), Set.of())));
         }
@@ -419,8 +579,13 @@ public class GraphFunctionLibrary {
     }
 
     private static Value buildClosureSet(ObjectValue graph, String edgeKey) {
-        val closure = computeAllPairsClosure(graph, edgeKey);
-        val result  = ObjectValue.builder();
+        final Map<String, Set<String>> closure;
+        try {
+            closure = computeAllPairsClosure(graph, edgeKey);
+        } catch (IllegalArgumentException e) {
+            return Value.error(e.getMessage());
+        }
+        val result = ObjectValue.builder();
         for (val entry : graph.entrySet()) {
             val setBuilder = ObjectValue.builder();
             for (val nodeId : closure.getOrDefault(entry.getKey(), Set.of())) {
@@ -431,16 +596,25 @@ public class GraphFunctionLibrary {
         return result.build();
     }
 
-    private static Value collectAttribute(ObjectValue graph, Set<String> reachableIds, String attrKey) {
+    private static Value collectAttribute(ObjectValue graph, Set<String> reachableIds, String attrKey,
+            long remainingBudget) {
         val collected = new ArrayList<Value>();
         for (val nodeId : reachableIds) {
             val attrValue = resolveAttribute(graph, nodeId, attrKey);
             if (attrValue instanceof ArrayValue arrayAttr) {
                 for (val element : arrayAttr) {
+                    if (remainingBudget == 0L) {
+                        return Value.error(ERROR_PROJECTION_TOO_LARGE, MAX_PROJECTED_ATTRIBUTE_VALUES);
+                    }
                     collected.add(element);
+                    remainingBudget--;
                 }
             } else if (attrValue != null) {
+                if (remainingBudget == 0L) {
+                    return Value.error(ERROR_PROJECTION_TOO_LARGE, MAX_PROJECTED_ATTRIBUTE_VALUES);
+                }
                 collected.add(attrValue);
+                remainingBudget--;
             }
         }
         return Value.ofArray(collected.toArray(Value[]::new));
@@ -474,8 +648,8 @@ public class GraphFunctionLibrary {
                     queue.addLast(rootId);
                 }
             }
-        } else if (initial instanceof TextValue textValue) {
-            val rootId = textValue.value();
+        } else {
+            val rootId = nodeIdOf(initial);
             if (visited.add(rootId)) {
                 queue.addLast(rootId);
             }

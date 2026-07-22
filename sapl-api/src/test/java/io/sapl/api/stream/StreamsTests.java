@@ -29,14 +29,20 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 @DisplayName("Streams")
 class StreamsTests {
+
+    private static final Instant REFERENCE = Instant.parse("2025-01-01T00:00:00Z");
+    private static final Clock   CLOCK     = Clock.fixed(REFERENCE, ZoneOffset.UTC);
 
     @Nested
     @DisplayName("just")
@@ -82,6 +88,56 @@ class StreamsTests {
     }
 
     @Nested
+    @DisplayName("defer")
+    class Defer {
+
+        @Test
+        @DisplayName("does not invoke the factory until the stream is first read")
+        void whenNotReadThenFactoryNotInvoked() throws InterruptedException {
+            val invoked = new AtomicBoolean(false);
+            val stream  = Streams.defer(() -> {
+                            invoked.set(true);
+                            return Streams.just(Value.of("v"));
+                        });
+
+            assertThat(invoked).isFalse();
+
+            assertThat(stream.awaitNext()).isEqualTo(Value.of("v"));
+            assertThat(invoked).isTrue();
+        }
+
+        @Test
+        @DisplayName("runs the factory off the calling thread, forwards its value, then completes")
+        void whenReadThenFactoryRunsOffThreadAndValueForwarded() throws InterruptedException {
+            val callingThread = Thread.currentThread();
+            val factoryThread = new AtomicReference<Thread>();
+            val stream        = Streams.defer(() -> {
+                                  factoryThread.set(Thread.currentThread());
+                                  return Streams.just(Value.of("a"));
+                              });
+
+            assertThat(stream.awaitNext()).isEqualTo(Value.of("a"));
+            assertThat(stream.awaitNext()).isNull();
+            assertThat(factoryThread.get()).isNotNull().isNotSameAs(callingThread);
+        }
+
+        @Test
+        @DisplayName("invokes the factory exactly once, even after the stream completes (one-shot, unlike repeat)")
+        void whenStreamCompletesThenFactoryNotReinvoked() throws InterruptedException {
+            val count  = new AtomicInteger(0);
+            val stream = Streams.defer(() -> {
+                           count.incrementAndGet();
+                           return Streams.just(Value.of("once"));
+                       });
+
+            assertThat(stream.awaitNext()).isEqualTo(Value.of("once"));
+            assertThat(stream.awaitNext()).isNull();
+            assertThat(stream.awaitNext()).isNull();
+            assertThat(count.get()).isEqualTo(1);
+        }
+    }
+
+    @Nested
     @DisplayName("scheduledAt")
     class ScheduledAt {
 
@@ -89,7 +145,7 @@ class StreamsTests {
 
         @BeforeEach
         void setUp() {
-            scheduler = new RealTimeScheduler();
+            scheduler = new RealTimeScheduler(CLOCK);
         }
 
         @AfterEach
@@ -100,7 +156,7 @@ class StreamsTests {
         @Test
         @DisplayName("emits the value at the scheduled instant and completes")
         void whenScheduledAtFutureThenEmitsAndCompletes() throws InterruptedException {
-            val when   = Clock.systemUTC().instant().plusMillis(40);
+            val when   = REFERENCE.plusMillis(40);
             val stream = Streams.scheduledAt(Value.of("now"), when, scheduler);
 
             assertThat(stream.awaitNext()).isEqualTo(Value.of("now"));
@@ -110,7 +166,7 @@ class StreamsTests {
         @Test
         @DisplayName("close before fire cancels the scheduled emission")
         void whenCloseBeforeFireThenNoEmission() {
-            val when   = Clock.systemUTC().instant().plusMillis(200);
+            val when   = REFERENCE.plusMillis(200);
             val stream = Streams.scheduledAt(Value.of("never"), when, scheduler);
 
             stream.close();
@@ -128,7 +184,7 @@ class StreamsTests {
 
         @BeforeEach
         void setUp() {
-            scheduler = new RealTimeScheduler();
+            scheduler = new RealTimeScheduler(CLOCK);
         }
 
         @AfterEach
@@ -140,7 +196,7 @@ class StreamsTests {
         @DisplayName("delivers each phase across a real time gap")
         void whenConcatOverScheduledTransitionThenBothPhasesDelivered() throws InterruptedException {
             val phase1 = Streams.just(Value.of("phase1"));
-            val phase2 = Streams.scheduledAt(Value.of("phase2"), Clock.systemUTC().instant().plusMillis(80), scheduler);
+            val phase2 = Streams.scheduledAt(Value.of("phase2"), REFERENCE.plusMillis(80), scheduler);
 
             val stream = Streams.concat(phase1, phase2);
 
@@ -209,6 +265,39 @@ class StreamsTests {
 
             await().pollDelay(Duration.ofMillis(120)).atMost(Duration.ofMillis(220))
                     .untilAsserted(() -> assertThat(callCount.get()).isLessThanOrEqualTo(countAtClose + 1));
+        }
+    }
+
+    @Nested
+    @DisplayName("scheduledPoll")
+    class ScheduledPoll {
+
+        @Test
+        @DisplayName("a close racing the reschedule still cancels the freshly scheduled tick")
+        void whenCloseRacesRescheduleThenScheduledTickIsCancelled() {
+            val lastCancelled = new AtomicBoolean(false);
+            val streamRef     = new AtomicReference<Stream<Value>>();
+            val pendingTick   = new AtomicReference<Runnable>();
+            val scheduleCount = new AtomicInteger();
+            // On the reschedule from the manually fired tick, close runs after the tick has
+            // passed its stopped re-check but before it stores the returned handle. Without
+            // re-checking stopped afterwards, that freshly scheduled handle is leaked.
+            val racingScheduler = new TimeScheduler() {
+                @Override
+                public Cancellable scheduleAt(Instant when, Runnable task) {
+                    if (scheduleCount.incrementAndGet() == 1) {
+                        pendingTick.set(task);
+                        return Cancellable.NOOP;
+                    }
+                    streamRef.get().close();
+                    return () -> lastCancelled.set(true);
+                }
+            };
+
+            streamRef.set(Streams.scheduledPoll(Duration.ofMillis(10), () -> Value.of("tick"), CLOCK, racingScheduler));
+            pendingTick.get().run();
+
+            assertThat(lastCancelled).as("handle scheduled while a close was racing must be cancelled").isTrue();
         }
     }
 

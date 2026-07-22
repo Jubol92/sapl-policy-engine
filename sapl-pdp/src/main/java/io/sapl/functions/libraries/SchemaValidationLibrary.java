@@ -22,6 +22,8 @@ import com.networknt.schema.Error;
 import io.sapl.api.functions.Function;
 import io.sapl.api.functions.FunctionLibrary;
 import io.sapl.api.model.*;
+import io.sapl.compiler.util.BoundedRegex;
+import io.sapl.compiler.util.BoundedRegularExpressionFactory;
 import lombok.val;
 
 import java.util.HashMap;
@@ -140,6 +142,7 @@ public class SchemaValidationLibrary {
 
     // Error messages
     private static final String ERROR_FAILED_TO_CONVERT_VALUE_TO_JSON = "Failed to convert value to JSON: %s.";
+    private static final String ERROR_SCHEMA_VALIDATION_FAILED        = "Schema validation failed: %s.";
     private static final String ERROR_UNEXPECTED_VALIDATION_RESULT    = "Unexpected validation result data.";
 
     // Return type schemas for IDE support
@@ -189,7 +192,7 @@ public class SchemaValidationLibrary {
             """;
 
     private static final SchemaRegistry SCHEMA_REGISTRY = SchemaRegistry
-            .withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
+            .withDefaultDialect(SpecificationVersion.DRAFT_2020_12, BoundedRegularExpressionFactory::applyTo);
 
     @Function(docs = """
             ```isCompliant(validationSubject, OBJECT schema)```:
@@ -270,13 +273,13 @@ public class SchemaValidationLibrary {
                        "B" : { "x" : 1, "y" : 2, "z" : 3 },
                        "C" : { "x" : 1, "y" : 2, "z" : 3 }
                     };
-              isCompliantWithExternalSchemas(valid, schema, externals) == true;
+              isCompliantWithExternalSchemas(valid, schema, [externals]) == true;
               var invalid = {
                        "A" : { "x" : "I AM NOT A NUMBER I AM A FREE MAN", "y" : 2, "z" : 3 },
                        "B" : { "x" : 1, "y" : 2, "z" : 3 },
                        "C" : { "x" : 1, "y" : 2, "z" : 3 }
                     };
-              isCompliantWithExternalSchemas(invalid, schema, externals) == false;
+              isCompliantWithExternalSchemas(invalid, schema, [externals]) == false;
             ```
             """, schema = RETURNS_BOOLEAN)
     public static Value isCompliantWithExternalSchemas(Value validationSubject, ObjectValue jsonSchema,
@@ -394,12 +397,17 @@ public class SchemaValidationLibrary {
             val schemaNode  = ValueJsonMarshaller.toJsonNode(jsonSchema);
             val validator   = registry.getSchema(SchemaLocation.of("mem://inline"), schemaNode);
             val subjectNode = ValueJsonMarshaller.toJsonNode(validationSubject);
-            val errors      = validator.validate(subjectNode);
+            val errors      = BoundedRegex.runWithSharedMatchBudget(() -> validator.validate(subjectNode));
             return createValidationResult(errors.isEmpty(), errors);
         } catch (SchemaException e) {
-            return createValidationResult(false, List.of());
+            // An uncompilable schema (malformed, bad or unresolvable $ref) is an author
+            // error, not a non-compliant subject. Surface it as an error.
+            return Value.error(ERROR_SCHEMA_VALIDATION_FAILED, e.getMessage());
         } catch (IllegalArgumentException e) {
             return Value.error(ERROR_FAILED_TO_CONVERT_VALUE_TO_JSON, e);
+        } catch (Throwable t) {
+            // Third-party validation on hostile input must not crash evaluation.
+            return Value.error(ERROR_SCHEMA_VALIDATION_FAILED, t.getMessage());
         }
     }
 
@@ -423,8 +431,10 @@ public class SchemaValidationLibrary {
         if (schemaMap.isEmpty()) {
             return SCHEMA_REGISTRY;
         }
-        return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12,
-                builder -> builder.schemas(schemaMap));
+        return SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12, builder -> {
+            builder.schemas(schemaMap);
+            BoundedRegularExpressionFactory.applyTo(builder);
+        });
     }
 
     private static Value createValidationResult(boolean valid, List<Error> errors) {

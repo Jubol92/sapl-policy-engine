@@ -34,6 +34,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.r2dbc.repository.config.EnableR2dbcRepositories;
 import io.sapl.spring.testsupport.SaplPepTestApp;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
@@ -65,17 +66,19 @@ import reactor.test.StepVerifier;
 
 /**
  * Engine-side end-to-end test of the R2DBC shim chain: a {@code @PreEnforce}
- * service method calls a reactive Spring Data repository whose underlying
- * {@code R2dbcEntityTemplate} bean has been wrapped by the
+ * service method calls a reactive Spring
+ * Data repository whose underlying {@code R2dbcEntityTemplate} bean has been
+ * wrapped by the
  * {@code R2dbcShimBeanPostProcessor}. The PDP returns a decision carrying a
- * {@code relational:queryManipulation} obligation; the
- * {@code RelationalQueryManipulationProvider} produces a Mapper that rewrites
- * the {@code Query} at the {@code RelationalQueryShimSignal}; the rewritten
- * query reaches H2 and the result set is asserted on real rows.
+ * {@code relational:queryRewriting}
+ * obligation; the {@code RelationalQueryRewritingProvider} produces a Mapper
+ * that rewrites the {@code Query} at the
+ * {@code RelationalQueryShimSignal}; the rewritten query reaches H2 and the
+ * result set is asserted on real rows.
  * <p>
  * Scenario: the Great Library of Palanthas. Tomes are catalogued by moon
- * alignment (Solinari, Lunitari, Nuitari) and a forbidden tier. Robe-color
- * users see only tomes their moon permits.
+ * alignment (Solinari, Lunitari, Nuitari) and a
+ * forbidden tier. Robe-color users see only tomes their moon permits.
  */
 @SpringBootTest(classes = RelationalShimChainTests.PalanthasLibraryTestApp.class)
 @WithMockUser(username = "raistlin", roles = "BLACK_ROBE")
@@ -295,7 +298,7 @@ class RelationalShimChainTests {
 
     private static AuthorizationDecision decisionWithRelationalCriteria(ObjectValue... criteria) {
         val obligation = Value
-                .ofObject(Map.of("type", Value.of("relational:queryManipulation"), "criteria", arrayOf(criteria)));
+                .ofObject(Map.of("type", Value.of("relational:queryRewriting"), "criteria", arrayOf(criteria)));
         return new AuthorizationDecision(Decision.PERMIT, Value.ofArray(obligation), Value.EMPTY_ARRAY,
                 Value.UNDEFINED);
     }
@@ -385,7 +388,7 @@ class RelationalShimChainTests {
 
     @SaplPepTestApp
     @EnableReactiveSaplMethodSecurity
-    @org.springframework.data.r2dbc.repository.config.EnableR2dbcRepositories(basePackageClasses = TomeRepository.class)
+    @EnableR2dbcRepositories(basePackageClasses = TomeRepository.class)
     static class PalanthasLibraryTestApp {
 
         @Bean
