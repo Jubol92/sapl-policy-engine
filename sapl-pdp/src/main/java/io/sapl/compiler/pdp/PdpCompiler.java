@@ -61,8 +61,9 @@ public class PdpCompiler {
      */
     public static CompiledPdp createErrorVoter(PDPConfiguration pdpConfiguration, SaplCompilerException exception,
             PluginsBundle plugins) {
-        val voterMetadata = new PdpVoterMetadata("pdp voter", pdpConfiguration.pdpId(), pdpConfiguration.pdpId(),
-                pdpConfiguration.combiningAlgorithm(), Outcome.PERMIT_OR_DENY, true);
+        val voterMetadata = new PdpVoterMetadata("pdp voter", pdpConfiguration.pdpId(),
+                pdpConfiguration.configurationId(), pdpConfiguration.combiningAlgorithm(), Outcome.PERMIT_OR_DENY,
+                true);
         val error         = Value.error(exception.getMessage());
         val errorVote     = Vote.error(error, voterMetadata);
         val coverageVoter = new ErrorPdpCoverageVoter(voterMetadata, errorVote);
@@ -100,8 +101,9 @@ public class PdpCompiler {
 
     public static CompiledPdp compilePDPConfiguration(PDPConfiguration pdpConfiguration, CompilationContext ctx,
             PluginsBundle plugins) {
-        val voterMetadata = new PdpVoterMetadata("pdp voter", pdpConfiguration.pdpId(), pdpConfiguration.pdpId(),
-                pdpConfiguration.combiningAlgorithm(), Outcome.PERMIT_OR_DENY, true);
+        val voterMetadata = new PdpVoterMetadata("pdp voter", pdpConfiguration.pdpId(),
+                pdpConfiguration.configurationId(), pdpConfiguration.combiningAlgorithm(), Outcome.PERMIT_OR_DENY,
+                true);
 
         val compiledDocuments = new ArrayList<CompiledDocument>(pdpConfiguration.saplDocuments().size());
         for (val saplDocument : pdpConfiguration.saplDocuments()) {

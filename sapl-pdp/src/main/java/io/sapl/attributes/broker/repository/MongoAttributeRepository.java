@@ -21,6 +21,7 @@ import io.sapl.api.model.ArrayValue;
 import io.sapl.api.model.Value;
 import io.sapl.api.model.ValueJsonMarshaller;
 import io.sapl.attributes.broker.AttributeRepository;
+import com.mongodb.client.model.changestream.FullDocument;
 import lombok.NonNull;
 import lombok.experimental.Delegate;
 import lombok.extern.slf4j.Slf4j;
@@ -71,7 +72,9 @@ public class MongoAttributeRepository implements AttributeRepository {
 
     // Requires MongoDB replica set (even a single-node rs works: --replSet rs0)
     private void subscribeToChangeStream() {
-        mongo.changeStream(Document.class).watchCollection("attributes").listen()
+        mongo.changeStream(Document.class)
+                .withOptions(options -> options.fullDocumentLookup(FullDocument.UPDATE_LOOKUP))
+                .watchCollection("attributes").listen()
                 .filter(event -> event.getBody() != null && pdpId.equals(event.getBody().getString("tenantId")))
                 .publishOn(Schedulers.boundedElastic()).subscribe(event -> {
                     var doc = event.getBody();
@@ -86,8 +89,10 @@ public class MongoAttributeRepository implements AttributeRepository {
                     }
 
                     var valueJson = doc.getString("value");
+
                     if (valueJson == null)
                         return;
+
                     var value = ValueJsonMarshaller.json(valueJson);
                     var dateField = doc.getDate("expiresAt");
                     var expiresAt = dateField != null ? dateField.toInstant() : null;

@@ -65,6 +65,7 @@ public class PostgresAttributeRepository implements AttributeRepository {
         this.pdpId  = pdpId;
         // Connect to the right channel to receive changes
         this.connection = Mono.from(connection.create()).cast(PostgresqlConnection.class).block();
+
         Mono.from(Objects.requireNonNull(this.connection).createStatement("LISTEN attribute_changes").execute())
                 .subscribe();
 
@@ -228,6 +229,7 @@ public class PostgresAttributeRepository implements AttributeRepository {
         } else {
             var value     = ValueJsonMarshaller.json(row.value());
             var expiresAt = row.expiresAt() != null ? row.expiresAt().toInstant() : null;
+
             if (expiresAt != null) {
                 var ttl = Duration.between(Instant.now(), expiresAt);
                 if (!ttl.isNegative())

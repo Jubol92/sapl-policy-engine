@@ -172,7 +172,7 @@ public class PostgresAttributeStore implements AttributeStore {
                 : List.of();
         Value       value     = valueRaw != null ? ValueJsonMarshaller.json(valueRaw) : Value.UNDEFINED;
 
-        return new AttributeEntry(new AttributeKey(entity, name, arguments), value);
+        return new AttributeEntry(new AttributeKey(entity, Objects.requireNonNull(name), arguments), value);
     }
 
 }

@@ -46,18 +46,25 @@ import static io.r2dbc.spi.ConnectionFactoryOptions.*;
 @UtilityClass
 public class AttributeRepositoryFactory {
 
+    // yield --> value goes back from a case to the switch expression and not "outside" the method like a return.
+    // config, pdpId parameter is set via AttributeConfiguration class
     public AttributeRepository create(ObjectValue config, String pdpId) {
         PdpIdValidator.validatePdpId(pdpId);
         val type = str(config, "type");
+
         return switch (type != null ? type : "") {
+
         case "postgres" -> {
-            val cf = ConnectionFactories.get(ConnectionFactoryOptions.builder().option(DRIVER, "postgresql")
+            val cf = ConnectionFactories.get(ConnectionFactoryOptions.builder()
+                    .option(DRIVER, "postgresql")
                     .option(HOST, Objects.requireNonNull(str(config, "host"))).option(PORT, num(config, "port"))
                     .option(USER, Objects.requireNonNull(str(config, "username")))
                     .option(PASSWORD, Objects.requireNonNull(str(config, "password")))
                     .option(DATABASE, Objects.requireNonNull(str(config, "database"))).build());
+
             yield new PostgresAttributeRepository(DatabaseClient.create(cf), cf, pdpId);
         }
+
         case "mongo"    -> {
             val host     = str(config, "host");
             val port     = num(config, "port");
@@ -65,26 +72,29 @@ public class AttributeRepositoryFactory {
             val username = str(config, "username");
             val password = str(config, "password");
             val authDb   = str(config, "authDatabase");
-            val creds    = username == null || username.isBlank() ? ""
-                    : encode(username) + ":" + encode(password) + "@";
-            val auth     = username == null || username.isBlank() ? ""
-                    : "?authSource=" + (authDb != null ? authDb : database);
+            val creds    = username == null || username.isBlank() ? "" : encode(username) + ":" + encode(password) + "@";
+            val auth     = username == null || username.isBlank() ? "" : "?authSource=" + (authDb != null ? authDb : database);
             val cs       = new ConnectionString("mongodb://" + creds + host + ":" + port + "/" + database + auth);
+
             yield new MongoAttributeRepository(
                     new ReactiveMongoTemplate(MongoClients.create(cs), Objects.requireNonNull(cs.getDatabase())),
                     pdpId);
         }
+
         case "redis"    -> {
             val host     = str(config, "host");
             val port     = num(config, "port");
             val password = str(config, "password");
             val db       = num(config, "database");
             val builder  = RedisURI.Builder.redis(host, port).withDatabase(db);
+
             if (password != null && !password.isBlank()) {
                 builder.withPassword(password.toCharArray());
             }
+
             yield new RedisAttributeRepository(RedisClient.create(builder.build()), pdpId);
         }
+
         default         -> new InMemoryAttributeRepository();
         };
     }

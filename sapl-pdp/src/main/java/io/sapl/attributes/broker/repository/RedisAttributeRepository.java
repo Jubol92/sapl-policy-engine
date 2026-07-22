@@ -124,16 +124,19 @@ public class RedisAttributeRepository implements AttributeRepository {
         fields.put("name", key.name());
         fields.put("arguments", valuesToJson(key.arguments()));
         fields.put("value", redisValue);
+
         if (key.entity() != null) {
             fields.put("entity", ValueJsonMarshaller.toJsonString(key.entity()));
         }
 
         cli.hset(redisKey, fields);
+
         if (ttl == null) {
             cli.persist(redisKey);
         } else {
             cli.expire(redisKey, ttl.toSeconds());
         }
+
         cli.publish("sapl:changes:" + redisKey, redisValue);
     }
 
@@ -213,38 +216,4 @@ public class RedisAttributeRepository implements AttributeRepository {
 
         toFire.forEach(callback -> callback.accept(value));
     }
-
-    /*
-     * private String toRawString(Value value) {
-     * return switch (value) {
-     * case TextValue(String s) -> s;
-     * default -> value.toString();
-     * };
-     * }
-     */
-
-    /*
-     * private Value toValueFromRedisValue(String value) {
-     * if (value == null)
-     * return Value.UNDEFINED;
-     *
-     * if (value.equalsIgnoreCase("true"))
-     * return Value.of(true);
-     *
-     * if (value.equalsIgnoreCase("false"))
-     * return Value.of(false);
-     *
-     * try {
-     * return Value.of(Long.parseLong(value));
-     * } catch (NumberFormatException ignored) {
-     * }
-     *
-     * try {
-     * return Value.of(Double.parseDouble(value));
-     * } catch (NumberFormatException ignored) {
-     * }
-     *
-     * return Value.of(value);
-     * }
-     */
 }

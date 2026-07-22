@@ -28,6 +28,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @Data
 @ConfigurationProperties(prefix = "io.sapl.attributes")
+// deprecated: config is now loaded via pdp.json and not spring context
 public class AttributeStorageProperties {
 
     /**

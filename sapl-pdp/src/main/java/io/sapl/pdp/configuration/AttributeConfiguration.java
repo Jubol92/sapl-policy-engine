@@ -47,7 +47,7 @@ import java.util.function.Consumer;
 
 @SuppressWarnings("unused")
 @Configuration
-@EnableConfigurationProperties(AttributeStorageProperties.class)
+@EnableConfigurationProperties(AttributeStorageProperties.class) // deprecated: remove later. not used anymore
 public class AttributeConfiguration {
 
     /*
@@ -171,6 +171,12 @@ public class AttributeConfiguration {
      * }
      */
 
+
+    /*
+       Builds the bean for the AttributeRepository. Contains two hash maps. One hash map from the configuration id to
+       the attribute repository and the other from the PDP id to the current configuration id. If there is a load or
+       remove event: create the repository over the factory.
+     */
     @Bean
     @Primary
     @SuppressWarnings("resource")
@@ -178,26 +184,40 @@ public class AttributeConfiguration {
         var cache       = new ConcurrentHashMap<String, AttributeRepository>(); // configId → repo
         var pdpToConfig = new ConcurrentHashMap<String, String>();              // pdpId → current configId
 
+        // Register the repository to the config change and removes the old repository
         source.subscribe(event -> {
             if (event instanceof ConfigurationEvent.Load load) {
                 val pdpId    = load.configuration().pdpId();
                 val configId = load.configuration().configurationId();
-
                 val oldConfigId = pdpToConfig.put(pdpId, configId);
+
                 if (oldConfigId != null && !oldConfigId.equals(configId)) {
                     Optional.ofNullable(cache.remove(oldConfigId)).ifPresent(AttributeRepository::close);
                 }
 
                 val repoNode = load.configuration().data().secrets().get("attributeRepository");
+
                 cache.computeIfAbsent(configId,
                         k -> repoNode instanceof ObjectValue obj ? AttributeRepositoryFactory.create(obj, pdpId)
                                 : new InMemoryAttributeRepository());
             } else if (event instanceof ConfigurationEvent.Remove(String pdpId)) {
+                
                 val configId = pdpToConfig.remove(pdpId);
                 Optional.ofNullable(cache.remove(configId)).ifPresent(AttributeRepository::close);
             }
         });
 
+        // Anonymous repository instance for the bean during the runtime. Dependent on the cache map it returns the
+        // right repository. The bean functions as proxy / router to route between x tenants to y backends.
+        // Reason: there's only one repository bean for the whole process but x tenants with different config.
+        // Otherwise, we would need a new spring context for each tenant or create a new bean
+        // Own spring context: too much overhead (own security config, all the beans, ...)
+        // New beans: cheaper, but the attribute broker gets a hard-wired object reference to the repository
+        // as constructor injection. During the runtime the application references to this object. That's why
+        // we're using a proxy
+        // Only observe and close are routed. The objects within the map are built objects from the factory. For that
+        // case publish/remove are never used because only the observe function is used within the pdp. At this point the
+        // router doesn't have the information of the repository key, entity etc. to call a publish/remove anyways
         return new AttributeRepository() {
             @Override
             public Registration observe(@NonNull AttributeFinderInvocation inv, @NonNull Consumer<Value> onValue) {
@@ -227,15 +247,20 @@ public class AttributeConfiguration {
         };
     }
 
+    // the broker bean to load all PIP's annotated with PolicyInformationPoint
     @Bean
     public AttributeBroker attributeBroker(AttributeRepository repository, ApplicationContext ctx) {
-        val pipBeans = Arrays.stream(ctx.getBeanNamesForAnnotation(PolicyInformationPoint.class)).map(ctx::getBean)
+        val pipBeans = Arrays.stream(ctx.getBeanNamesForAnnotation(PolicyInformationPoint.class))
+                .map(ctx::getBean)
                 .collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
+
         pipBeans.add(new UserPolicyInformationPoint());
+
         return PolicyDecisionPointBuilder.buildPolicyInformationPointAttributeBroker(Clock.systemUTC(),
                 JsonMapper.builder().build(), true, pipBeans, repository);
     }
 
+    // todo: maybe deprecated or still used to load jackson instances?
     @Bean
     public ObjectMapper objectMapper() {
         ObjectMapper mapper = new ObjectMapper();

@@ -90,6 +90,7 @@ public class MongoAttributeStore implements AttributeStore {
         Objects.requireNonNull(tenantId, ERROR_TENANT_IS_EMPTY);
 
         var query = new Query(Criteria.where("tenantId").is(tenantId));
+
         query.addCriteria(new Criteria().orOperator(Criteria.where("expiresAt").isNull(),
                 Criteria.where("expiresAt").gt(new Date())));
         query.with(Sort.by(Sort.Direction.ASC, "name", "entity", "arguments"));

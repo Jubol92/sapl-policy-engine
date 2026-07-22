@@ -51,6 +51,7 @@ public class AttributeApiService {
         Long        ttl         = body.getTtl();
 
         var sig = new AttributeKey(entityValue, attribute, arguments);
+
         if (ttl == null || ttl <= 0) {
             store.publish(sig, value, resolveTenantId(tenantId));
         } else {
