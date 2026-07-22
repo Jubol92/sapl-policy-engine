@@ -185,7 +185,7 @@ public class AttributeConfiguration {
 
         // Register the repository to the config change and removes the old repository
         source.subscribe(event -> {
-            if (event instanceof ConfigurationEvent.Load load) {
+            if (event instanceof ConfigurationEvent.NewConfiguration load) {
                 val pdpId       = load.configuration().pdpId();
                 val configId    = load.configuration().configurationId();
                 val oldConfigId = pdpToConfig.put(pdpId, configId);
@@ -199,7 +199,7 @@ public class AttributeConfiguration {
                 cache.computeIfAbsent(configId,
                         k -> repoNode instanceof ObjectValue obj ? AttributeRepositoryFactory.create(obj, pdpId)
                                 : new InMemoryAttributeRepository());
-            } else if (event instanceof ConfigurationEvent.Remove(String pdpId)) {
+            } else if (event instanceof ConfigurationEvent.ConfigurationRemoved(String pdpId)) {
 
                 val configId = pdpToConfig.remove(pdpId);
                 Optional.ofNullable(cache.remove(configId)).ifPresent(AttributeRepository::close);
