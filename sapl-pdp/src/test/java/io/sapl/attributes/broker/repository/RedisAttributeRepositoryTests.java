@@ -65,8 +65,8 @@ class RedisAttributeRepositoryTests {
     }
 
     private static AttributeFinderInvocation invocation(String name) {
-        return new AttributeFinderInvocation("default", name, List.of(), Duration.ofSeconds(1), Duration.ofMillis(100),
-                Duration.ofMillis(100), 0L, false,
+        return new AttributeFinderInvocation("default", "default", name, List.of(), Duration.ofSeconds(1),
+                Duration.ofMillis(100), Duration.ofMillis(100), 0L, false,
                 new AttributeAccessContext(Value.EMPTY_OBJECT, Value.EMPTY_OBJECT, Value.EMPTY_OBJECT));
     }
 
