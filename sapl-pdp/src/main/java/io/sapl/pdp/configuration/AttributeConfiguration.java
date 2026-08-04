@@ -185,16 +185,16 @@ public class AttributeConfiguration {
 
         // Register the repository to the config change and removes the old repository
         source.subscribe(event -> {
-            if (event instanceof ConfigurationEvent.NewConfiguration load) {
-                val pdpId       = load.configuration().pdpId();
-                val configId    = load.configuration().configurationId();
+            if (event instanceof ConfigurationEvent.NewConfiguration(io.sapl.api.pdp.configuration.PDPConfiguration configuration)) {
+                val pdpId       = configuration.pdpId();
+                val configId    = configuration.configurationId();
                 val oldConfigId = pdpToConfig.put(pdpId, configId);
 
                 if (oldConfigId != null && !oldConfigId.equals(configId)) {
                     Optional.ofNullable(cache.remove(oldConfigId)).ifPresent(AttributeRepository::close);
                 }
 
-                val repoNode = load.configuration().data().secrets().get("attributeRepository");
+                val repoNode = configuration.data().secrets().get("attributeRepository");
 
                 cache.computeIfAbsent(configId,
                         k -> repoNode instanceof ObjectValue obj ? AttributeRepositoryFactory.create(obj, pdpId)

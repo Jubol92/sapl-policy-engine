@@ -5,6 +5,8 @@ vaadin:
   allowed-packages: io.sapl
 
 spring:
+  application:
+    name: "Attribute API GUI"
   security:
     oauth2:
       client:
