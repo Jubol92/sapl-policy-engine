@@ -55,7 +55,7 @@ import static org.springframework.security.config.Customizer.withDefaults;
 @EnableConfigurationProperties(AttributeApiSecurityProperties.class)
 @ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 @RequiredArgsConstructor
-@SuppressWarnings("unused")
+
 public class AttributeSecurityConfiguration {
     private final AttributeApiSecurityProperties properties;
 

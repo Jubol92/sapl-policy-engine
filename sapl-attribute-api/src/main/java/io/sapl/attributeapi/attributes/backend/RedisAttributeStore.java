@@ -32,7 +32,6 @@ import io.sapl.api.model.ValueJsonMarshaller;
 import lombok.NonNull;
 import org.jspecify.annotations.Nullable;
 
-@SuppressWarnings("unused")
 public class RedisAttributeStore implements AttributeStore {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String UNDEFINED_STRING       = "UNDEFINED";

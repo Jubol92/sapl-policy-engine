@@ -41,7 +41,7 @@ import java.util.Objects;
 // R2DBC offers persistent DB connections. A consistent connection
 // is necessary because we need Postgres Pub/Sub
 @Slf4j
-@SuppressWarnings("unused")
+
 public class PostgresAttributeRepository implements AttributeRepository {
     private static final String ERROR_HANDLE_NOTIFICATION = "Error while handling attribute_changes notification for pdpId '{}'";
 
@@ -58,7 +58,6 @@ public class PostgresAttributeRepository implements AttributeRepository {
 
     private record DBEntry(String name, String entity, String arguments, String value, OffsetDateTime expiresAt) {}
 
-    @SuppressWarnings("DataFlowIssue")
     public PostgresAttributeRepository(DatabaseClient client, ConnectionFactory connection, String pdpId) {
 
         this.client = client;
@@ -70,7 +69,7 @@ public class PostgresAttributeRepository implements AttributeRepository {
                 .subscribe();
 
         // boundedElastic --> allowing a thread pool with blocking operations
-        this.connection.getNotifications().map(Notification::getParameter).publishOn(Schedulers.boundedElastic())
+        this.connection.getNotifications().mapNotNull(Notification::getParameter).publishOn(Schedulers.boundedElastic())
                 .subscribe(this::handleNotification, error -> log.error(ERROR_HANDLE_NOTIFICATION, pdpId, error));
 
         this.internalRepository = new InMemoryAttributeRepository(this::deleteFromDB);

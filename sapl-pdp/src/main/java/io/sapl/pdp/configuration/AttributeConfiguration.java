@@ -50,6 +50,12 @@ import java.util.function.Consumer;
 @EnableConfigurationProperties(AttributeStorageProperties.class) // deprecated: remove later. not used anymore
 public class AttributeConfiguration {
 
+    // Shared fallback for observe() on an unknown configId. One instance for the whole process
+    // lifetime, not one per call - InMemoryAttributeRepository starts a scheduler thread in its
+    // constructor, so Map.getOrDefault(..., new InMemoryAttributeRepository()) would leak a
+    // thread on every call because getOrDefault evaluates its default argument eagerly.
+    private static final AttributeRepository EMPTY_REPOSITORY = new InMemoryAttributeRepository();
+
     /*
      * @Bean
      *
@@ -178,6 +184,8 @@ public class AttributeConfiguration {
      */
     @Bean
     @Primary
+    // SuppressWarnings("resource"): The repository outlives this method, and it's stored in the cache and stored later.
+    // TODO: Clarify if SuppressWarnings is ok!
     @SuppressWarnings("resource")
     public AttributeRepository attributeRepository(PDPConfigurationSource source) {
         var cache       = new ConcurrentHashMap<String, AttributeRepository>(); // configId → repo
@@ -221,8 +229,7 @@ public class AttributeConfiguration {
         return new AttributeRepository() {
             @Override
             public Registration observe(@NonNull AttributeFinderInvocation inv, @NonNull Consumer<Value> onValue) {
-                return cache.getOrDefault(inv.configurationId(), new InMemoryAttributeRepository()).observe(inv,
-                        onValue);
+                return cache.getOrDefault(inv.configurationId(), EMPTY_REPOSITORY).observe(inv, onValue);
             }
 
             @Override

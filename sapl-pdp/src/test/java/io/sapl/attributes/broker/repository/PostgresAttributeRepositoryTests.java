@@ -66,6 +66,7 @@ class PostgresAttributeRepositoryTests {
                 .port(postgres.getMappedPort(5432)).database(postgres.getDatabaseName())
                 .username(postgres.getUsername()).password(postgres.getPassword()).build();
         val connectionFactory = new PostgresqlConnectionFactory(config);
+
         client = DatabaseClient.create(connectionFactory);
         client.sql(CREATE_TABLE).then().block();
         repository = new PostgresAttributeRepository(client, connectionFactory, "test-tenant");

@@ -34,7 +34,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 
-@SuppressWarnings("unused")
 public class MongoAttributeStore implements AttributeStore {
     private static final String ERROR_TTL_NOT_POSITIVE = "Ttl must be a strictly positive Duration.";
     private static final String ERROR_PDP_ID_IS_EMPTY  = "pdpId must be resolved before reaching the store";

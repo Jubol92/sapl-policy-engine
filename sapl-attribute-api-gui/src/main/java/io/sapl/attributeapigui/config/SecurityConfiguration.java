@@ -36,7 +36,6 @@ import java.util.Set;
 
 @Configuration
 @EnableWebSecurity
-@SuppressWarnings("unused")
 public class SecurityConfiguration {
 
     @Bean

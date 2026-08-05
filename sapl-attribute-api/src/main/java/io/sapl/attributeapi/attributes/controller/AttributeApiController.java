@@ -37,7 +37,7 @@ import java.util.NoSuchElementException;
 @ConditionalOnProperty(name = "io.sapl.attribute-api.enabled", havingValue = "true")
 @RestController
 @RequestMapping("/api/attributes")
-@SuppressWarnings("unused")
+
 public class AttributeApiController {
     private static final String NO_PDP_ID = "";
 

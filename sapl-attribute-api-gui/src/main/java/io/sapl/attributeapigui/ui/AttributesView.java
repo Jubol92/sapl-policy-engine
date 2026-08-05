@@ -91,10 +91,11 @@ public class AttributesView extends VerticalLayout {
                 return;
             }
             var entity       = selected.get("entity");
-            @SuppressWarnings("unchecked")
-            var rawArguments = (List<Object>) selected.get("arguments");
-            var arguments    = rawArguments == null ? List.<String>of()
-                    : rawArguments.stream().map(String::valueOf).toList();
+            var rawArguments = selected.get("arguments");
+
+            // Generics are erased at runtime, so only the raw List type is checkable here.
+            var arguments = rawArguments instanceof List<?> rawList ? rawList.stream().map(String::valueOf).toList()
+                    : List.<String>of();
             deleteItem(entity == null ? null : entity.toString(), selected.get("name").toString(), arguments);
         }, Key.DELETE).listenOn(grid);
 

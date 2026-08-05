@@ -40,7 +40,7 @@ import java.util.List;
 import java.util.Objects;
 
 @Slf4j
-@SuppressWarnings("unused")
+
 public class MongoAttributeRepository implements AttributeRepository {
     private static final String ERROR_HANDLE_NOTIFICATION = "Error while handling attribute_changes notification for pdpId '{}'";
 
