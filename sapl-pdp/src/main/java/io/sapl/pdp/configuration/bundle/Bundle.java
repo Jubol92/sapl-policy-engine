@@ -22,10 +22,13 @@ import io.sapl.api.pdp.configuration.PDPConfiguration;
 import io.sapl.pdp.configuration.ExtensionFiles;
 import io.sapl.pdp.configuration.PDPConfigurationException;
 import io.sapl.pdp.configuration.PDPConfigurationLoader;
+import io.sapl.secrets.SecretSealingException;
+import io.sapl.secrets.ValueSealer;
 import lombok.val;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -59,7 +62,9 @@ record Bundle(
     private static final String ERROR_AUDIENCE_WITHOUT_SEALED_CONTENT = "Bundle manifest names an audience.sealingRecipient but the bundle carries no sealed content. The audience block is required exactly when sealed content is present.";
     private static final String ERROR_MANIFEST_REQUIRED = "Bundle has no .sapl-manifest.json. Since SAPL 4.2.0 the manifest carries the required configurationId; rebuild the bundle with BundleBuilder or 'sapl bundle create'.";
     private static final String ERROR_SEALED_CONTENT_REQUIRES_AUDIENCE = "Bundle carries sealed content but its manifest names no audience.sealingRecipient. Rebuild the bundle so the manifest records the sealing recipient key id.";
-    private static final String ERROR_SEALING_RECIPIENT_NOT_HELD = "Bundle's sealed content is sealed to recipient key '%s', but the local deployment only holds sealing keys %s. The sealed content cannot be unsealed here.";
+    private static final String ERROR_SEALED_RECIPIENT_MISMATCH = "Sealed bundle file '%s' contains a recipient that does not match the manifest audience.";
+    private static final String ERROR_SEALED_RECIPIENT_UNREADABLE = "Sealed bundle file '%s' contains a malformed recipient header.";
+    private static final String ERROR_SEALING_RECIPIENT_NOT_HELD = "Bundle's sealed content names a recipient key not held by this deployment. Configured sealing keys: %s.";
     private static final String ERROR_SECURITY_POLICY_REQUIRED = "Security policy is required. Use BundleSecurityPolicy.builder(publicKey).build() for production or explicitly disable verification with risk acceptance for development.";
 
     private static final String PDP_JSON = "pdp.json";
@@ -74,11 +79,17 @@ record Bundle(
         allSecretNames.addAll(sealedExtensionSecrets.keySet());
         val criticalExtensions = ExtensionFiles.parseCriticalExtensions(criticalExtensionsJson);
         ExtensionFiles.validateIntegrity(criticalExtensions, extensions.keySet(), allSecretNames);
-        val configuration = PDPConfigurationLoader.loadFromBundle(pdpJson, secretsJson, saplDocuments, pdpId,
+        val configuration  = PDPConfigurationLoader.loadFromBundle(pdpJson, secretsJson, saplDocuments, pdpId,
                 manifest.configurationId());
-        val allSecrets    = toValues(extensionSecrets);
+        val provenance     = new BundleProvenance(pdpId, saplDocuments, pdpJson, extensions, criticalExtensionsJson,
+                manifest);
+        val withProvenance = new PDPConfiguration(configuration.pdpId(), configuration.configurationId(),
+                configuration.combiningAlgorithm(), configuration.compilerOptions(), configuration.saplDocuments(),
+                configuration.data(), configuration.extensions(), configuration.extensionSecrets(),
+                configuration.criticalExtensions(), provenance);
+        val allSecrets     = toValues(extensionSecrets);
         allSecrets.putAll(toValues(sealedExtensionSecrets));
-        return configuration.withExtensions(toValues(extensions), allSecrets, criticalExtensions);
+        return withProvenance.withExtensions(toValues(extensions), allSecrets, criticalExtensions);
     }
 
     private void checkAudience(BundleSecurityPolicy securityPolicy) {
@@ -95,8 +106,26 @@ record Bundle(
         }
         val heldKeyIds = securityPolicy.sealingKeyIds();
         if (!heldKeyIds.isEmpty() && !heldKeyIds.contains(audience.sealingRecipient())) {
-            throw new PDPConfigurationException(
-                    ERROR_SEALING_RECIPIENT_NOT_HELD.formatted(audience.sealingRecipient(), heldKeyIds));
+            throw new PDPConfigurationException(ERROR_SEALING_RECIPIENT_NOT_HELD.formatted(heldKeyIds));
+        }
+        if (secretsSealed) {
+            requireRecipient(ExtensionFiles.SEALED_SECRETS_FILE, secretsJson, audience.sealingRecipient());
+        }
+        for (val entry : sealedExtensionSecrets.entrySet()) {
+            requireRecipient(
+                    ExtensionFiles.EXTENSION_PREFIX + entry.getKey() + ExtensionFiles.SEALED_EXTENSION_SECRETS_SUFFIX,
+                    entry.getValue(), audience.sealingRecipient());
+        }
+    }
+
+    private static void requireRecipient(String fileName, String json, String expectedRecipient) {
+        try {
+            val recipients = ValueSealer.recipientKeyIdsOf(Value.ofJson(json));
+            if (!recipients.isEmpty() && !Set.of(expectedRecipient).equals(recipients)) {
+                throw new PDPConfigurationException(ERROR_SEALED_RECIPIENT_MISMATCH.formatted(fileName));
+            }
+        } catch (SecretSealingException e) {
+            throw new PDPConfigurationException(ERROR_SEALED_RECIPIENT_UNREADABLE.formatted(fileName), e);
         }
     }
 
